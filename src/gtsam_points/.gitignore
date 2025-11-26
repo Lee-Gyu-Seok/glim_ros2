@@ -1,0 +1,5 @@
+*.ini
+.vscode/*
+build/*
+docs/html/*
+imgui.ini

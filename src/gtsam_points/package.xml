@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>gtsam_points</name>
+  <version>1.0.8</version>
+  <description>Point cloud registration and SLAM factors for GTSAM</description>
+  <maintainer email="k.koide@aist.go.jp">k.koide</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>libboost-all-dev</build_depend>
+  <build_depend>libeigen3-dev</build_depend>
+  <build_depend>libomp-dev</build_depend>
+  <depend>gtsam</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

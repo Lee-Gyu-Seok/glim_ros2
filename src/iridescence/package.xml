@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>iridescence</name>
+  <version>0.1.6</version>
+  <description>A point cloud viewer for rapid prototyping of 3D algorithms</description>
+  <maintainer email="k.koide@aist.go.jp">k.koide</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>libeigen3-dev</build_depend>
+  <build_depend>libglm-dev</build_depend>
+  <build_depend>libglfw3-dev</build_depend>
+  <build_depend>libpng-dev</build_depend>
+  <build_depend>libjpeg-dev</build_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
