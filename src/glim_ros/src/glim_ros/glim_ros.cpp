@@ -76,8 +76,8 @@ GlimROS::GlimROS(const rclcpp::NodeOptions& options) : Node("glim_ros", options)
     print_system_info(logger);
   }
 
-  dump_on_unload = false;
-  this->declare_parameter<bool>("dump_on_unload", false);
+  dump_on_unload = true;
+  this->declare_parameter<bool>("dump_on_unload", true);
   this->get_parameter<bool>("dump_on_unload", dump_on_unload);
 
   if (dump_on_unload) {

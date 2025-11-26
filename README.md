@@ -86,6 +86,24 @@ rviz2 -d src/glim_ros2/src/glim_ros/rviz/glim_ros.rviz
 ros2 run glim_ros glim_rosbag {rosbag2 파일 경로}
 ```
 
+### offline_viewer (맵 시각화)
+
+저장된 맵을 불러와 시각화하고 편집할 수 있습니다.
+
+```bash
+# 기본 사용법
+ros2 run glim_ros offline_viewer --map_path /tmp/dump
+
+# 옵션
+ros2 run glim_ros offline_viewer --help
+```
+
+| 옵션 | 설명 |
+|------|------|
+| `--map_path` | 저장된 맵 폴더 경로 (필수) |
+| `--config_path` | 설정 경로 (기본: `config/presets/mlx`) |
+| `--debug` | 디버그 출력 활성화 |
+
 ### 설정 파일 사용
 
 커스텀 설정 파일을 사용하려면:
