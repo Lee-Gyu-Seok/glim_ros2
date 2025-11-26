@@ -5,7 +5,9 @@
 #include <deque>
 #include <thread>
 #include <iostream>
+#include <iomanip>
 #include <functional>
+#include <filesystem>
 #include <boost/format.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -51,9 +53,25 @@ GlimROS::GlimROS(const rclcpp::NodeOptions& options) : Node("glim_ros", options)
 
   if (debug) {
     spdlog::info("enable debug printing");
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("/tmp/glim_log.log", true);
+
+    // Create Log directory in glim_ros package source directory
+    std::string log_dir = ament_index_cpp::get_package_share_directory("glim_ros") + "/../../../src/glim_ros2/src/glim_ros/Log";
+    if (!std::filesystem::exists(log_dir)) {
+      std::filesystem::create_directories(log_dir);
+      spdlog::info("Created log directory: {}", log_dir);
+    }
+
+    // Create log file with timestamp
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time_t_now), "%Y%m%d_%H%M%S");
+    std::string log_file = log_dir + "/glim_log_" + ss.str() + ".log";
+
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_file, true);
     logger->sinks().push_back(file_sink);
     logger->set_level(spdlog::level::trace);
+    spdlog::info("Log file: {}", log_file);
 
     print_system_info(logger);
   }
