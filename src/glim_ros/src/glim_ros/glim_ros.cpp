@@ -67,7 +67,7 @@ GlimROS::GlimROS(const rclcpp::NodeOptions& options) : Node("glim_ros", options)
   }
 
   std::string config_path;
-  this->declare_parameter<std::string>("config_path", "config");
+  this->declare_parameter<std::string>("config_path", "config/presets/mlx");
   this->get_parameter<std::string>("config_path", config_path);
 
   if (config_path[0] != '/') {

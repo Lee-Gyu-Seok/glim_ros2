@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
   desc.add_options()                                                               //
     ("help", "produce help message")                                               //
     ("map_path", value<std::string>(), "Input map path (dump directory)")          //
-    ("config_path", value<std::string>()->default_value("config"), "Config path")  //
+    ("config_path", value<std::string>()->default_value("config/presets/mlx"), "Config path")  //
     ("debug", "Enable debug printing")                                             //
     ;
 

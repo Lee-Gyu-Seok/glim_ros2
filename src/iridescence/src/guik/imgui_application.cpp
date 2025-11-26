@@ -77,6 +77,9 @@ bool Application::init(const Eigen::Vector2i& size, const char* glsl_version, bo
 
   ImGui::StyleColorsDark();
 
+  // Set font scale (2.0 = 200%)
+  ImGui::GetIO().FontGlobalScale = 2.0f;
+
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
 
