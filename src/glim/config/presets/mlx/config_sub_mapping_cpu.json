@@ -7,14 +7,14 @@
     "enable_imu": true,
     "enable_optimization": false,
     // Keyframe update strategy
-    "max_num_keyframes": 15,
+    "max_num_keyframes": 3,
     "keyframe_update_strategy": "OVERLAP",
     "keyframe_update_min_points": 500,
     "keyframe_update_interval_rot": 3.14,
     "keyframe_update_interval_trans": 1.0,
     "max_keyframe_overlap": 0.6,
     // Relative pose factors
-    "create_between_factors": false,
+    "create_between_factors": true,
     "between_registration_type": "GICP",
     // Registration error factors
     "registration_error_factor_type": "VGICP",
