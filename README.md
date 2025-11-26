@@ -148,6 +148,23 @@ colcon build
 git submodule update --init --recursive
 ```
 
+### Global Mapping에서 IndeterminantLinearSystemException 에러
+
+맵핑 중 아래와 같은 에러가 발생하는 경우:
+
+```
+[global] [error] an indeterminant linear system exception was caught during global map optimization!!
+Indeterminant linear system detected while working near variable (Symbol: v2)
+```
+
+`config_global_mapping_cpu.json`에서 `enable_imu`를 `false`로 설정:
+
+```json
+"enable_imu": false
+```
+
+이 설정은 Global Mapping에서 IMU를 비활성화합니다. Odometry에서는 여전히 IMU를 사용하므로 맵 품질에 큰 영향은 없습니다.
+
 ## 패키지 설명
 
 | 패키지 | 설명 |

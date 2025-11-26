@@ -38,6 +38,9 @@ else()
   add_definitions(-DCV_BRIDGE_INCLUDE_HPP)
 endif()
 
+# Define source directory path for Log folder
+add_definitions(-DGLIM_ROS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 ### glim_ros ###
 ament_auto_add_library(glim_ros SHARED
   src/glim_ros/glim_ros.cpp

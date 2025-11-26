@@ -1,4 +1,8 @@
 #include <iostream>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
+#include <filesystem>
 #include <spdlog/spdlog.h>
 #include <rclcpp/rclcpp.hpp>
 
@@ -16,12 +20,23 @@ int main(int argc, char** argv) {
   rclcpp::spin(glim);
   rclcpp::shutdown();
 
-  std::string dump_path = "/tmp/dump";
-  glim->declare_parameter<std::string>("dump_path", dump_path);
-  glim->get_parameter<std::string>("dump_path", dump_path);
+  // Create Log directory
+  std::string log_dir = std::string(GLIM_ROS_SOURCE_DIR) + "/Log";
+  if (!std::filesystem::exists(log_dir)) {
+    std::filesystem::create_directories(log_dir);
+    spdlog::info("Created log directory: {}", log_dir);
+  }
+
+  // Create map folder with timestamp
+  auto now = std::chrono::system_clock::now();
+  auto time_t_now = std::chrono::system_clock::to_time_t(now);
+  std::stringstream ss;
+  ss << std::put_time(std::localtime(&time_t_now), "%Y%m%d_%H%M%S");
+  std::string dump_path = log_dir + "/map_" + ss.str();
 
   glim->wait();
   glim->save(dump_path);
+  spdlog::info("Map saved to: {}", dump_path);
 
   return 0;
 }

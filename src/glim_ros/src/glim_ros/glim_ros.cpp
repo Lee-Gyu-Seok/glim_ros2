@@ -54,8 +54,8 @@ GlimROS::GlimROS(const rclcpp::NodeOptions& options) : Node("glim_ros", options)
   if (debug) {
     spdlog::info("enable debug printing");
 
-    // Create Log directory in glim_ros package source directory
-    std::string log_dir = ament_index_cpp::get_package_share_directory("glim_ros") + "/../../../src/glim_ros2/src/glim_ros/Log";
+    // Create Log directory in glim_ros source directory
+    std::string log_dir = std::string(GLIM_ROS_SOURCE_DIR) + "/Log";
     if (!std::filesystem::exists(log_dir)) {
       std::filesystem::create_directories(log_dir);
       spdlog::info("Created log directory: {}", log_dir);
