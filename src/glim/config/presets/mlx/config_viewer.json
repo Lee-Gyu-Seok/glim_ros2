@@ -18,7 +18,14 @@
     "point_size_metric": false,
     "point_size": 10.0,
     "points_alpha": 0.5,
-    "factors_alpha": 0.5
+    "factors_alpha": 0.5,
+    // Camera settings
+    // camera_mode: "orbit_xy", "orbit_xz", "topdown", "arcball"
+    "camera_mode": "orbit_xy",
+    "camera_distance": 50.0,
+    "camera_yaw": 3.14,
+    "camera_pitch": -0.595,
+    "camera_focal_point": [5.0, 0.0, 0.0]
   },
   "interactive_viewer": {
     "viewer_width": 2560,

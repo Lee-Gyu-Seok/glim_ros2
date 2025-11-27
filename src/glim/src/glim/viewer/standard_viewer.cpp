@@ -33,6 +33,10 @@
 #include <glk/primitives/primitives.hpp>
 #include <guik/spdlog_sink.hpp>
 #include <guik/viewer/light_viewer.hpp>
+#include <guik/camera/orbit_camera_control_xy.hpp>
+#include <guik/camera/orbit_camera_control_xz.hpp>
+#include <guik/camera/topdown_camera_control.hpp>
+#include <guik/camera/arcball_camera_control.hpp>
 
 namespace glim {
 
@@ -639,6 +643,32 @@ void StandardViewer::viewer_loop() {
   if (enable_partial_rendering) {
     viewer->enable_partial_rendering(1e-1);
     viewer->shader_setting().add("dynamic_object", 1);
+  }
+
+  // Camera settings
+  const std::string camera_mode = config.param<std::string>("standard_viewer", "camera_mode", "orbit_xy");
+  const double camera_distance = config.param("standard_viewer", "camera_distance", 80.0);
+  const double camera_yaw = config.param("standard_viewer", "camera_yaw", 0.0);
+  const double camera_pitch = config.param("standard_viewer", "camera_pitch", -60.0 * M_PI / 180.0);
+  const Eigen::Vector3d camera_focal_point = config.param("standard_viewer", "camera_focal_point", Eigen::Vector3d(0.0, 0.0, 0.0));
+
+  if (camera_mode == "orbit_xz") {
+    auto camera = std::make_shared<guik::OrbitCameraControlXZ>(camera_distance, camera_yaw, camera_pitch);
+    camera->lookat(camera_focal_point.cast<float>());
+    viewer->set_camera_control(camera);
+  } else if (camera_mode == "topdown") {
+    auto camera = std::make_shared<guik::TopDownCameraControl>(camera_distance, camera_yaw);
+    camera->lookat(camera_focal_point.cast<float>());
+    viewer->set_camera_control(camera);
+  } else if (camera_mode == "arcball") {
+    auto camera = std::make_shared<guik::ArcBallCameraControl>(camera_distance);
+    camera->lookat(camera_focal_point.cast<float>());
+    viewer->set_camera_control(camera);
+  } else {
+    // Default: orbit_xy
+    auto camera = std::make_shared<guik::OrbitCameraControlXY>(camera_distance, camera_yaw, camera_pitch);
+    camera->lookat(camera_focal_point.cast<float>());
+    viewer->set_camera_control(camera);
   }
 
   auto submap_viewer = viewer->sub_viewer("submap");
