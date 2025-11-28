@@ -53,7 +53,7 @@ void IntegratedVGICPDerivatives::reset_inliers(const Eigen::Isometry3f& x, const
 
     check_error << cudaFreeAsync(source_inliers, stream);
     check_error << cudaMallocAsync(&source_inliers, sizeof(int) * source->size(), stream);
-    thrust::sequence(thrust::cuda::par_nosync.on(stream), source_inliers, source_inliers + source->size(), 0);
+    thrust::sequence(thrust::cuda::par.on(stream), source_inliers, source_inliers + source->size(), 0);
     num_inliers = source->size();
   } else {
     inlier_evaluation_point_gpu = nullptr;

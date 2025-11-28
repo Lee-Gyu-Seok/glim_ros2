@@ -75,7 +75,7 @@ PointCloud::Ptr merge_frames_gpu(
     const thrust::device_ptr<const Eigen::Matrix3f> covs_ptr(frame->covs_gpu);
 
     thrust::transform(
-      thrust::cuda::par_nosync.on(stream),
+      thrust::cuda::par.on(stream),
       points_ptr,
       points_ptr + frame->size(),
       all_points_ptr + begin,
@@ -172,7 +172,7 @@ overlap_gpu(const GaussianVoxelMap::ConstPtr& target_, const PointCloud::ConstPt
   thrust::device_ptr<bool> overlap_ptr(overlap);
 
   thrust::transform(
-    thrust::cuda::par_nosync.on(stream),
+    thrust::cuda::par.on(stream),
     thrust::device_ptr<Eigen::Vector3f>(source->points_gpu),
     thrust::device_ptr<Eigen::Vector3f>(source->points_gpu) + source->size(),
     overlap_ptr,
@@ -258,7 +258,7 @@ double overlap_gpu(
     auto last = thrust::make_transform_iterator(thrust::device_ptr<Eigen::Vector3f>(source->points_gpu) + source->size(), overlap_kernel);
 
     thrust::transform(
-      thrust::cuda::par_nosync.on(stream),
+      thrust::cuda::par.on(stream),
       thrust::make_zip_iterator(thrust::make_tuple(overlap_ptr, first)),
       thrust::make_zip_iterator(thrust::make_tuple(overlap_ptr + source->size(), last)),
       overlap_ptr,
@@ -333,7 +333,7 @@ std::vector<double> overlap_gpu(
     const auto& source = sources[i];
     const auto& target = targets[i];
     thrust::transform(
-      thrust::cuda::par_nosync.on(stream),
+      thrust::cuda::par.on(stream),
       thrust::device_ptr<Eigen::Vector3f>(source->points_gpu),
       thrust::device_ptr<Eigen::Vector3f>(source->points_gpu) + source->size(),
       thrust::device_ptr<bool>(overlap),

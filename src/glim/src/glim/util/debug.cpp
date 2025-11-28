@@ -76,7 +76,11 @@ void print_system_info(std::shared_ptr<spdlog::logger> logger) {
 
 #ifdef GTSAM_POINTS_USE_CUDA
   logger->debug("*** CUDA ***");
+#if defined(GTSAM_POINTS_CUDA_VERSION_MAJOR)
   logger->debug("GTSAM_POINTS_CUDA_VERSION={}.{}.{}", GTSAM_POINTS_CUDA_VERSION_MAJOR, GTSAM_POINTS_CUDA_VERSION_MINOR, GTSAM_POINTS_CUDA_VERSION_PATCH);
+#else
+  logger->debug("GTSAM_POINTS_CUDA_VERSION=unknown");
+#endif
   const auto devices = gtsam_points::cuda_device_names();
   logger->debug("CUDA devices:");
   for (const auto& device : devices) {

@@ -211,13 +211,13 @@ void GaussianVoxelMapGPU::insert(const PointCloud& frame) {
   thrust::device_ptr<Eigen::Matrix3f> covs_ptr(frame.covs_gpu);
 
   thrust::for_each(
-    thrust::cuda::par_nosync.on(stream),
+    thrust::cuda::par.on(stream),
     thrust::make_zip_iterator(thrust::make_tuple(points_ptr, covs_ptr)),
     thrust::make_zip_iterator(thrust::make_tuple(points_ptr + frame.size(), covs_ptr + frame.size())),
     accumulate_points_kernel(voxelmap_info_ptr, buckets, num_points, voxel_means, voxel_covs));
 
   thrust::for_each(
-    thrust::cuda::par_nosync.on(stream),
+    thrust::cuda::par.on(stream),
     thrust::counting_iterator<int>(0),
     thrust::counting_iterator<int>(voxelmap_info.num_voxels),
     finalize_voxels_kernel(num_points, voxel_means, voxel_covs));
@@ -230,7 +230,7 @@ void GaussianVoxelMapGPU::create_bucket_table(cudaStream_t stream, const PointCl
   Eigen::Vector3i* coords;
   check_error << cudaMallocAsync(&coords, sizeof(Eigen::Vector3i) * frame.size(), stream);
   thrust::transform(
-    thrust::cuda::par_nosync.on(stream),
+    thrust::cuda::par.on(stream),
     thrust::device_ptr<Eigen::Vector3f>(frame.points_gpu),
     thrust::device_ptr<Eigen::Vector3f>(frame.points_gpu + frame.size()),
     coords,
@@ -251,7 +251,7 @@ void GaussianVoxelMapGPU::create_bucket_table(cudaStream_t stream, const PointCl
     check_error << cudaMemsetAsync(voxels_failures, 0, sizeof(int) * 2, stream);
 
     thrust::for_each(
-      thrust::cuda::par_nosync.on(stream),
+      thrust::cuda::par.on(stream),
       thrust::counting_iterator<int>(0),
       thrust::counting_iterator<int>(frame.size()),
       voxel_bucket_assignment_kernel(voxelmap_info_ptr, coords, index_buckets, voxels_failures));
@@ -270,7 +270,7 @@ void GaussianVoxelMapGPU::create_bucket_table(cudaStream_t stream, const PointCl
   check_error << cudaFreeAsync(buckets, stream);
   check_error << cudaMallocAsync(&buckets, sizeof(VoxelBucket) * voxelmap_info.num_buckets, stream);
   thrust::transform(
-    thrust::cuda::par_nosync.on(stream),
+    thrust::cuda::par.on(stream),
     thrust::device_ptr<thrust::pair<int, int>>(index_buckets),
     thrust::device_ptr<thrust::pair<int, int>>(index_buckets) + voxelmap_info.num_buckets,
     thrust::device_ptr<VoxelBucket>(buckets),
