@@ -6,7 +6,7 @@
   // isam2_relinearize_thresh    :
   */
   "odometry_estimation": {
-    "so_name": "libodometry_estimation_gpu.so",
+    "so_name": "auto",  // "auto" = GPU if available, else CPU. Or specify: "libodometry_estimation_gpu.so" / "libodometry_estimation_cpu.so"
     // Initialization params
     "initialization_mode": "LOOSE",
     "initialization_window_size": 3.0,

@@ -9,8 +9,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-option(BUILD_WITH_CUDA "Build with GPU support" ON)
 option(BUILD_WITH_CUDA_MULTIARCH "Build with GPU cross-platform support" OFF)
+
+# Auto-detect CUDA based on gtsam_points configuration
+# Will be verified after find_package(gtsam_points)
+if(NOT DEFINED BUILD_WITH_CUDA)
+  set(BUILD_WITH_CUDA ON CACHE BOOL "Build with GPU support (will be auto-detected based on gtsam_points)" FORCE)
+endif()
 option(BUILD_WITH_VIEWER "Build with visualizer" ON)
 option(BUILD_WITH_MARCH_NATIVE "Build with -march=native" OFF)
 option(BUILD_WITH_OPENCV "Build with OpenCV to support camera images" ON)

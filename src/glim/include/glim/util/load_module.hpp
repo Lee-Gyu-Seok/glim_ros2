@@ -1,8 +1,13 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 namespace glim {
+
+bool check_so_exists(const std::string& so_name);
+
+std::string resolve_auto_module(const std::string& so_name, const std::string& gpu_so, const std::string& cpu_so);
 
 void open_so(const std::string& so_name);
 

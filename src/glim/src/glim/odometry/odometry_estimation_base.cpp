@@ -26,7 +26,12 @@ EstimationFrame::ConstPtr OdometryEstimationBase::insert_frame(const Preprocesse
 }
 
 std::shared_ptr<OdometryEstimationBase> OdometryEstimationBase::load_module(const std::string& so_name) {
-  return load_module_from_so<OdometryEstimationBase>(so_name, "create_odometry_estimation_module");
+  const std::string resolved_so_name = resolve_auto_module(
+    so_name,
+    "libodometry_estimation_gpu.so",
+    "libodometry_estimation_cpu.so"
+  );
+  return load_module_from_so<OdometryEstimationBase>(resolved_so_name, "create_odometry_estimation_module");
 }
 
 }
