@@ -11,6 +11,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
@@ -75,6 +76,9 @@ private:
 
   std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Odometry>> odom_corrected_pub;
   std::shared_ptr<rclcpp::Publisher<geometry_msgs::msg::PoseStamped>> pose_corrected_pub;
+
+  std::shared_ptr<rclcpp::Publisher<nav_msgs::msg::Path>> path_pub;
+  nav_msgs::msg::Path path_msg;
 
   std::mutex trajectory_mutex;
   std::unique_ptr<TrajectoryManager> trajectory;

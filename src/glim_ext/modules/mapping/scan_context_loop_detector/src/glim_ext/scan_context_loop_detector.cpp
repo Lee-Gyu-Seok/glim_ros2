@@ -45,7 +45,7 @@ public:
   ScanContextLoopDetector() : logger(create_module_logger("scancontext")) {
     logger->info("Creating ScanContext manager...");
     sc.reset(new SCManager);
-    sc->SC_DIST_THRES = 0.1;  // Lower threshold = stricter matching (was 0.2)
+    sc->SC_DIST_THRES = 0.15;
     logger->info("ScanContext manager created");
 
     frame_count = 0;
@@ -182,10 +182,9 @@ public:
         // TODO: should check if it's close to the current estimate?
         logger->info("Loop detected!!");
         using gtsam::symbol_shorthand::X;
-        // Use softer noise model to prevent ill-posed system (was 1e6)
-        const auto noise_model = gtsam::noiseModel::Isotropic::Precision(6, 1e3);
+        const auto noise_model = gtsam::noiseModel::Isotropic::Precision(6, 1e6);
         const auto robust_model = gtsam::noiseModel::Robust::Create(gtsam::noiseModel::mEstimator::Huber::Create(1.0), noise_model);
-        auto factor = gtsam::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(submap1->id), X(submap2->id), gtsam::Pose3(T_origin1_origin2.matrix()), robust_model);
+        auto factor = gtsam::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(submap1->id), X(submap2->id), gtsam::Pose3(T_origin1_origin2.matrix()), noise_model);
         loop_factors.push_back(factor);
       }
     }
@@ -246,7 +245,7 @@ public:
 
     logger->debug("inliear_fraction={}", factor->inlier_fraction());
 
-    return factor->inlier_fraction() > 0.8;
+    return factor->inlier_fraction() > 0.85;
   }
 
 private:

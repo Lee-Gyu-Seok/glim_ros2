@@ -165,11 +165,46 @@ Indeterminant linear system detected while working near variable (Symbol: v2)
 
 이 설정은 Global Mapping에서 IMU를 비활성화합니다. Odometry에서는 여전히 IMU를 사용하므로 맵 품질에 큰 영향은 없습니다.
 
+## 출력 파일 설명
+
+`glim_rosbag` 또는 `glim_rosnode` 실행 후 `glim_ros/Log/map_날짜시간/` 폴더에 다음 파일들이 저장됩니다:
+
+### Trajectory 파일 (TUM 형식)
+
+모든 trajectory 파일은 TUM RGB-D 형식을 따릅니다:
+```
+timestamp x y z qx qy qz qw
+```
+- `timestamp`: 프레임 타임스탬프 (초)
+- `x y z`: 위치 (미터)
+- `qx qy qz qw`: 쿼터니언 회전
+
+| 파일 | 설명 |
+|------|------|
+| `odom_imu.txt` | IMU 프레임의 Odometry 궤적 (루프 클로저 미적용) |
+| `traj_imu.txt` | IMU 프레임의 Global Mapping 궤적 (루프 클로저 적용) |
+| `odom_lidar.txt` | LiDAR 프레임의 Odometry 궤적 (루프 클로저 미적용) |
+| `traj_lidar.txt` | LiDAR 프레임의 Global Mapping 궤적 (루프 클로저 적용) |
+
+### 그래프 및 최적화 파일
+
+| 파일 | 설명 |
+|------|------|
+| `graph.txt` | 팩터 그래프 메타데이터 (서브맵 수, 프레임 수, 매칭 팩터 정보) |
+| `values.bin` | GTSAM 최적화 결과 (포즈, 속도, IMU 바이어스) - 바이너리 형식 |
+
+### Submap 파일
+
+| 파일 | 설명 |
+|------|------|
+| `submap_XXXX.bin` | 각 서브맵의 포인트 클라우드 데이터 |
+
 ## 패키지 설명
 
 | 패키지 | 설명 |
 |--------|------|
 | `glim_ros` | ROS2 노드 및 메시지 처리 |
 | `glim` | LiDAR-IMU SLAM 코어 알고리즘 |
+| `glim_ext` | GLIM 확장 모듈 (ScanContext 루프 클로저 등) |
 | `gtsam_points` | GTSAM 기반 포인트 클라우드 등록 팩터 |
 | `iridescence` | OpenGL 기반 3D 시각화 라이브러리 |

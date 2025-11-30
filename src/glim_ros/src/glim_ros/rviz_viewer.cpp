@@ -84,6 +84,9 @@ std::vector<GenericTopicSubscription::Ptr> RvizViewer::create_subscriptions(rclc
   odom_corrected_pub = node.create_publisher<nav_msgs::msg::Odometry>("~/odom_corrected", 10);
   pose_corrected_pub = node.create_publisher<geometry_msgs::msg::PoseStamped>("~/pose_corrected", 10);
 
+  path_pub = node.create_publisher<nav_msgs::msg::Path>("~/path", 10);
+  path_msg.header.frame_id = map_frame_id;
+
   return {};
 }
 
@@ -231,8 +234,25 @@ void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, 
     pose.pose.orientation.z = quat_world_imu.z();
     pose.pose.orientation.w = quat_world_imu.w();
     pose_pub->publish(pose);
-
     logger->debug("published pose (stamp={})", new_frame->stamp);
+  }
+
+  // Publish path (simple accumulation of poses)
+  if (!corrected && path_pub->get_subscription_count()) {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.stamp = stamp;
+    pose.header.frame_id = map_frame_id;
+    pose.pose.position.x = T_world_imu.translation().x();
+    pose.pose.position.y = T_world_imu.translation().y();
+    pose.pose.position.z = T_world_imu.translation().z();
+    pose.pose.orientation.x = quat_world_imu.x();
+    pose.pose.orientation.y = quat_world_imu.y();
+    pose.pose.orientation.z = quat_world_imu.z();
+    pose.pose.orientation.w = quat_world_imu.w();
+
+    path_msg.poses.push_back(pose);
+    path_msg.header.stamp = stamp;
+    path_pub->publish(path_msg);
   }
 
   auto& points_pub = !corrected ? this->points_pub : this->points_corrected_pub;
@@ -301,8 +321,9 @@ void RvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& sub
       return;
     }
 
-    // Publish global map every 10 seconds
     const rclcpp::Time now = rclcpp::Clock(rcl_clock_type_t::RCL_ROS_TIME).now();
+
+    // Publish global map every 10 seconds
     if (now - last_globalmap_pub_time < std::chrono::seconds(10)) {
       return;
     }
