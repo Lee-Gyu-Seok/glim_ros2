@@ -71,7 +71,9 @@ public:
   int PC_NUM_RING = 20;         // 20 in the original paper (IROS 18)
   int PC_NUM_SECTOR = 60;       // 60 in the original paper (IROS 18)
   double PC_MAX_RADIUS = 80.0;  // 80 meter max in the original paper (IROS 18)
-  double PC_UNIT_SECTORANGLE = 360.0 / double(PC_NUM_SECTOR);
+  double PC_FOV = 360.0;        // LiDAR horizontal field of view (degrees), 360 for spinning LiDAR, 120 for MLX solid-state
+  double PC_FOV_OFFSET = -60.0; // FOV center offset from forward direction (degrees), for MLX: -60 means FOV is [-60, +60]
+  double PC_UNIT_SECTORANGLE = PC_FOV / double(PC_NUM_SECTOR);
   double PC_UNIT_RINGGAP = PC_MAX_RADIUS / double(PC_NUM_RING);
 
   // tree
@@ -88,9 +90,9 @@ public:
   int TREE_MAKING_PERIOD_ = 50;  // i.e., remaking tree frequency, to avoid non-mandatory every remaking, to save time cost / if you want to find a very recent revisits use
                                  // small value of it (it is enough fast ~ 5-50ms wrt N.).
 
-  // Method to recalculate derived parameters after setting PC_NUM_SECTOR/PC_NUM_RING/PC_MAX_RADIUS
+  // Method to recalculate derived parameters after setting PC_NUM_SECTOR/PC_NUM_RING/PC_MAX_RADIUS/PC_FOV
   void updateDerivedParams() {
-    PC_UNIT_SECTORANGLE = 360.0 / double(PC_NUM_SECTOR);
+    PC_UNIT_SECTORANGLE = PC_FOV / double(PC_NUM_SECTOR);
     PC_UNIT_RINGGAP = PC_MAX_RADIUS / double(PC_NUM_RING);
   }
   int tree_making_period_conter = 0;

@@ -169,14 +169,56 @@ MatrixXd SCManager::makeScancontext( pcl::PointCloud<SCPointType> & _scan_down )
 
         // xyz to ring, sector
         azim_range = sqrt(pt.x * pt.x + pt.y * pt.y);
-        azim_angle = xy2theta(pt.x, pt.y);
+        azim_angle = xy2theta(pt.x, pt.y);  // returns 0-360 degrees
 
         // if range is out of roi, pass
         if( azim_range > PC_MAX_RADIUS )
             continue;
 
+        // Convert angle to FOV-relative angle
+        // For limited FOV LiDAR (e.g., MLX 120°), we need to check if the point is within FOV
+        // and map the angle to sector index based on FOV, not 360°
+        // PC_FOV_OFFSET defines the start angle of FOV (e.g., -60° for MLX means FOV is [-60, +60])
+        double fov_start = PC_FOV_OFFSET;
+        double fov_end = PC_FOV_OFFSET + PC_FOV;
+
+        // Normalize fov_start and fov_end to [0, 360)
+        while (fov_start < 0) fov_start += 360.0;
+        while (fov_end < 0) fov_end += 360.0;
+        while (fov_start >= 360.0) fov_start -= 360.0;
+        while (fov_end >= 360.0) fov_end -= 360.0;
+
+        // Check if point is within FOV (handle wrap-around case)
+        bool in_fov = false;
+        double angle_in_fov = 0.0;
+
+        if (PC_FOV >= 360.0) {
+            // Full 360° LiDAR - all points are in FOV
+            in_fov = true;
+            angle_in_fov = azim_angle;
+        } else if (fov_start < fov_end) {
+            // Normal case: FOV doesn't wrap around 360°
+            if (azim_angle >= fov_start && azim_angle <= fov_end) {
+                in_fov = true;
+                angle_in_fov = azim_angle - fov_start;
+            }
+        } else {
+            // Wrap-around case: FOV crosses 360° boundary
+            if (azim_angle >= fov_start || azim_angle <= fov_end) {
+                in_fov = true;
+                if (azim_angle >= fov_start) {
+                    angle_in_fov = azim_angle - fov_start;
+                } else {
+                    angle_in_fov = (360.0 - fov_start) + azim_angle;
+                }
+            }
+        }
+
+        if (!in_fov)
+            continue;
+
         ring_idx = std::max( std::min( PC_NUM_RING, int(ceil( (azim_range / PC_MAX_RADIUS) * PC_NUM_RING )) ), 1 );
-        sctor_idx = std::max( std::min( PC_NUM_SECTOR, int(ceil( (azim_angle / 360.0) * PC_NUM_SECTOR )) ), 1 );
+        sctor_idx = std::max( std::min( PC_NUM_SECTOR, int(ceil( (angle_in_fov / PC_FOV) * PC_NUM_SECTOR )) ), 1 );
 
         // taking maximum z
         if ( desc(ring_idx-1, sctor_idx-1) < pt.z ) // -1 means cpp starts from 0

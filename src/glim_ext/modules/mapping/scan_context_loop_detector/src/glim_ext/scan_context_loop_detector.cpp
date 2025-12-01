@@ -47,42 +47,43 @@ public:
     logger->info("Creating ScanContext manager...");
     sc.reset(new SCManager);
 
-    // Load parameters from config file
-    auto config_path = GlobalConfig::get_config_path("config_scan_context.json");
-    if (config_path.empty()) {
-      logger->warn("config_scan_context.json not found, using default parameters");
-    } else {
-      logger->info("Loading ScanContext config from: {}", config_path);
-    }
+    // Load parameters from dedicated config file
+    // Note: get_config_path() appends .json automatically, so don't include it in the name
+    auto config_path = GlobalConfig::get_config_path("config_scan_context");
+    logger->info("Loading ScanContext config from: {}", config_path);
 
-    // Get global config instance
-    auto* config = GlobalConfig::instance();
+    // Create a separate Config instance to load the ScanContext config file
+    Config config(config_path);
 
     // ScanContext parameters (configurable)
-    sc->LIDAR_HEIGHT = config->param<double>("scan_context", "lidar_height", 2.0);
-    sc->PC_NUM_RING = config->param<int>("scan_context", "pc_num_ring", 20);
-    sc->PC_NUM_SECTOR = config->param<int>("scan_context", "pc_num_sector", 60);
-    sc->PC_MAX_RADIUS = config->param<double>("scan_context", "pc_max_radius", 80.0);
-    sc->NUM_EXCLUDE_RECENT = config->param<int>("scan_context", "num_exclude_recent", 50);
-    sc->NUM_CANDIDATES_FROM_TREE = config->param<int>("scan_context", "num_candidates_from_tree", 10);
-    sc->SEARCH_RATIO = config->param<double>("scan_context", "search_ratio", 0.1);
-    sc->SC_DIST_THRES = config->param<double>("scan_context", "sc_dist_threshold", 0.2);
-    sc->TREE_MAKING_PERIOD_ = config->param<int>("scan_context", "tree_making_period", 50);
+    sc->LIDAR_HEIGHT = config.param<double>("scan_context", "lidar_height", 2.0);
+    sc->PC_NUM_RING = config.param<int>("scan_context", "pc_num_ring", 20);
+    sc->PC_NUM_SECTOR = config.param<int>("scan_context", "pc_num_sector", 60);
+    sc->PC_MAX_RADIUS = config.param<double>("scan_context", "pc_max_radius", 80.0);
+    sc->PC_FOV = config.param<double>("scan_context", "pc_fov", 360.0);
+    sc->PC_FOV_OFFSET = config.param<double>("scan_context", "pc_fov_offset", -60.0);
+    sc->NUM_EXCLUDE_RECENT = config.param<int>("scan_context", "num_exclude_recent", 50);
+    sc->NUM_CANDIDATES_FROM_TREE = config.param<int>("scan_context", "num_candidates_from_tree", 10);
+    sc->SEARCH_RATIO = config.param<double>("scan_context", "search_ratio", 0.1);
+    sc->SC_DIST_THRES = config.param<double>("scan_context", "sc_dist_threshold", 0.2);
+    sc->TREE_MAKING_PERIOD_ = config.param<int>("scan_context", "tree_making_period", 50);
 
     // Update derived parameters
     sc->updateDerivedParams();
 
     // Loop detector parameters
-    min_movement_threshold = config->param<double>("scan_context", "min_movement_threshold", 1.0);
-    inlier_fraction_threshold = config->param<double>("scan_context", "inlier_fraction_threshold", 0.7);
-    icp_max_iterations = config->param<int>("scan_context", "icp_max_iterations", 5);
-    icp_num_threads = config->param<int>("scan_context", "icp_num_threads", 4);
+    min_movement_threshold = config.param<double>("scan_context", "min_movement_threshold", 1.0);
+    inlier_fraction_threshold = config.param<double>("scan_context", "inlier_fraction_threshold", 0.7);
+    icp_max_iterations = config.param<int>("scan_context", "icp_max_iterations", 5);
+    icp_num_threads = config.param<int>("scan_context", "icp_num_threads", 4);
 
     logger->info("ScanContext parameters:");
     logger->info("  lidar_height: {}", sc->LIDAR_HEIGHT);
     logger->info("  pc_num_ring: {}", sc->PC_NUM_RING);
     logger->info("  pc_num_sector: {}", sc->PC_NUM_SECTOR);
     logger->info("  pc_max_radius: {}", sc->PC_MAX_RADIUS);
+    logger->info("  pc_fov: {}", sc->PC_FOV);
+    logger->info("  pc_fov_offset: {}", sc->PC_FOV_OFFSET);
     logger->info("  sc_dist_threshold: {}", sc->SC_DIST_THRES);
     logger->info("  min_movement_threshold: {}", min_movement_threshold);
     logger->info("  inlier_fraction_threshold: {}", inlier_fraction_threshold);
@@ -212,7 +213,13 @@ public:
 
         // Initial guess for the relative pose between submaps
         Eigen::Isometry3d T_frame1_frame2 = Eigen::Isometry3d::Identity();
-        T_frame1_frame2.linear() = Eigen::AngleAxisd(heading, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+        // For limited FOV LiDAR (< 360°), sector shift does NOT represent yaw difference
+        // because the same scene is only visible when looking in the same direction.
+        // Only use heading estimate for full 360° LiDAR.
+        if (sc->PC_FOV >= 360.0) {
+          T_frame1_frame2.linear() = Eigen::AngleAxisd(heading, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+        }
+        // For limited FOV, use Identity rotation (assume same heading direction)
 
         Eigen::Isometry3d T_origin1_origin2 = T_origin1_frame1 * T_frame1_frame2 * T_origin2_frame2.inverse();
         if (!validate_loop(submap1->frame, submap2->frame, T_origin1_origin2)) {
@@ -222,9 +229,14 @@ public:
         // TODO: should check if it's close to the current estimate?
         logger->info("Loop detected!!");
         using gtsam::symbol_shorthand::X;
-        const auto noise_model = gtsam::noiseModel::Isotropic::Precision(6, 1e6);
-        const auto robust_model = gtsam::noiseModel::Robust::Create(gtsam::noiseModel::mEstimator::Huber::Create(1.0), noise_model);
-        auto factor = gtsam::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(submap1->id), X(submap2->id), gtsam::Pose3(T_origin1_origin2.matrix()), noise_model);
+        // Use robust noise model (Cauchy) like SC-PGO to handle potential outliers
+        const double loop_noise_score = 0.5;
+        gtsam::Vector6 robust_noise_vec;
+        robust_noise_vec << loop_noise_score, loop_noise_score, loop_noise_score, loop_noise_score, loop_noise_score, loop_noise_score;
+        const auto base_noise = gtsam::noiseModel::Diagonal::Variances(robust_noise_vec);
+        const auto robust_noise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Cauchy::Create(1.0), base_noise);
+        auto factor = gtsam::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(submap1->id), X(submap2->id), gtsam::Pose3(T_origin1_origin2.matrix()), robust_noise);
         loop_factors.push_back(factor);
       }
     }

@@ -1,28 +1,19 @@
 {
-  /*** ScanContext Loop Detector Configuration ***/
   "scan_context": {
-    // LiDAR height from ground (meters)
-    // Set to 0 if using robot-coord-transformed lidar scans
-    "lidar_height": 2.0,
-
-    // Polar context resolution (IROS 2018 paper defaults)
-    "pc_num_ring": 20,           // Number of rings (radial direction)
-    "pc_num_sector": 60,         // Number of sectors (angular direction)
-    "pc_max_radius": 80.0,       // Maximum search radius (meters)
-
-    // Loop detection parameters
-    "num_exclude_recent": 50,          // Exclude recent N frames from loop detection
-    "num_candidates_from_tree": 10,    // Number of candidates from KD-tree search
-    "search_ratio": 0.1,               // Sector shift search range (10%)
-    "sc_dist_threshold": 0.2,          // ScanContext distance threshold (0.1-0.2 recommended)
-
-    // KD-tree rebuild period (frames)
+    "lidar_height": 0.82,
+    "pc_num_ring": 20,
+    "pc_num_sector": 60,
+    "pc_max_radius": 30.0,
+    "pc_fov": 120.0,
+    "pc_fov_offset": -60.0,
+    "num_exclude_recent": 50,
+    "num_candidates_from_tree": 10,
+    "search_ratio": 0.1,
+    "sc_dist_threshold": 0.5,
     "tree_making_period": 50,
-
-    // Loop validation parameters
-    "min_movement_threshold": 1.0,     // Minimum movement to add frame (meters)
-    "inlier_fraction_threshold": 0.7,  // ICP inlier ratio threshold (0.0-1.0)
-    "icp_max_iterations": 5,           // Maximum ICP iterations for validation
-    "icp_num_threads": 4               // Number of threads for ICP
+    "min_movement_threshold": 1.0,
+    "inlier_fraction_threshold": 0.7,
+    "icp_max_iterations": 5,
+    "icp_num_threads": 4
   }
 }

@@ -1,5 +1,16 @@
 {
   /*** Sensor configurations for MLX LiDAR ***/
+  // MLX Solid-State LiDAR Specifications
+  "lidar_spec": {
+    "type": "solid_state",
+    "vertical_channels": 56,
+    "horizontal_points": 192,
+    "horizontal_fov": 120.0,
+    "vertical_fov": 30.0,
+    "max_range": 100.0,
+    "scan_rate": 20
+  },
+
   // T_lidar_imu format: [x, y, z, qx, qy, qz, qw] (TUM format)
   // Given extrinsic_T: [-0.052, -0.083, -0.018] (IMU -> LiDAR translation)
   // Given extrinsic_R: Identity matrix (no rotation)

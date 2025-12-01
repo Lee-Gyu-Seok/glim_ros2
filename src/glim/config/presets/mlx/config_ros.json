@@ -21,7 +21,9 @@
     // Extension modules
     "extension_modules": [
       "libmemory_monitor.so",
-      "libstandard_viewer.so"
+      "libstandard_viewer.so",
+      "libscan_context_loop_detector.so",
+      "/home/soslab/colcon_ws/src/glim_ros2/src/glim_ext/modules/odometry/gravity_estimator/build/libgravity_estimator.so"
     ],
     // Topics for MLX
     "imu_topic": "/spadi/imu",

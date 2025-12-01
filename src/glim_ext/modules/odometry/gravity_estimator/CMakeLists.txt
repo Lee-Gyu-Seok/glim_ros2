@@ -3,6 +3,7 @@ project(gravity_estimator)
 
 find_package(glim REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(GTSAM REQUIRED)
 find_package(Iridescence REQUIRED)
 
 add_library(gravity_estimator SHARED
