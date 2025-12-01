@@ -21,9 +21,7 @@
     // Extension modules
     "extension_modules": [
       "libmemory_monitor.so",
-      "libstandard_viewer.so",
-      "librviz_viewer.so",
-      "libscan_context_loop_detector.so"
+      "libstandard_viewer.so"
     ],
     // Topics for MLX
     "imu_topic": "/spadi/imu",

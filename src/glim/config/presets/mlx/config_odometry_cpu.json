@@ -12,25 +12,25 @@
     "initialization_window_size": 3.0,
     "init_pose_damping_scale": 1e10,
     // Optimizer params
-    "smoother_lag": 8.0,
+    "smoother_lag": 10.0,
     "use_isam2_dogleg": false,
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
     "fix_imu_bias": false,
     // Registration settings
     "registration_type": "GICP",
-    "max_iterations": 10,
+    "max_iterations": 15,
     "lru_thresh": 100,
     "target_downsampling_rate": 0.1,
     // GICP + iVox params
-    "ivox_resolution": 0.7,
-    "ivox_min_dist": 0.1,
+    "ivox_resolution": 0.25,
+    "ivox_min_dist": 0.05,
     // VGICP params
-    "vgicp_resolution": 0.5,
-    "vgicp_voxelmap_levels": 1,
+    "vgicp_resolution": 0.25,
+    "vgicp_voxelmap_levels": 2,
     "vgicp_voxelmap_scaling_factor": 2.0,
     // Optimizer params
     "save_imu_rate_trajectory": true,
-    "num_threads": 2
+    "num_threads": 4
   }
 }

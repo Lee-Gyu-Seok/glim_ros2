@@ -19,6 +19,7 @@
 #include <glim/odometry/estimation_frame.hpp>
 #include <glim/mapping/sub_map.hpp>
 #include <glim/util/logging.hpp>
+#include <glim/util/config.hpp>
 #include <glim/util/concurrent_vector.hpp>
 #include <glim/util/extension_module.hpp>
 
@@ -45,7 +46,46 @@ public:
   ScanContextLoopDetector() : logger(create_module_logger("scancontext")) {
     logger->info("Creating ScanContext manager...");
     sc.reset(new SCManager);
-    sc->SC_DIST_THRES = 0.15;
+
+    // Load parameters from config file
+    auto config_path = GlobalConfig::get_config_path("config_scan_context.json");
+    if (config_path.empty()) {
+      logger->warn("config_scan_context.json not found, using default parameters");
+    } else {
+      logger->info("Loading ScanContext config from: {}", config_path);
+    }
+
+    // Get global config instance
+    auto* config = GlobalConfig::instance();
+
+    // ScanContext parameters (configurable)
+    sc->LIDAR_HEIGHT = config->param<double>("scan_context", "lidar_height", 2.0);
+    sc->PC_NUM_RING = config->param<int>("scan_context", "pc_num_ring", 20);
+    sc->PC_NUM_SECTOR = config->param<int>("scan_context", "pc_num_sector", 60);
+    sc->PC_MAX_RADIUS = config->param<double>("scan_context", "pc_max_radius", 80.0);
+    sc->NUM_EXCLUDE_RECENT = config->param<int>("scan_context", "num_exclude_recent", 50);
+    sc->NUM_CANDIDATES_FROM_TREE = config->param<int>("scan_context", "num_candidates_from_tree", 10);
+    sc->SEARCH_RATIO = config->param<double>("scan_context", "search_ratio", 0.1);
+    sc->SC_DIST_THRES = config->param<double>("scan_context", "sc_dist_threshold", 0.2);
+    sc->TREE_MAKING_PERIOD_ = config->param<int>("scan_context", "tree_making_period", 50);
+
+    // Update derived parameters
+    sc->updateDerivedParams();
+
+    // Loop detector parameters
+    min_movement_threshold = config->param<double>("scan_context", "min_movement_threshold", 1.0);
+    inlier_fraction_threshold = config->param<double>("scan_context", "inlier_fraction_threshold", 0.7);
+    icp_max_iterations = config->param<int>("scan_context", "icp_max_iterations", 5);
+    icp_num_threads = config->param<int>("scan_context", "icp_num_threads", 4);
+
+    logger->info("ScanContext parameters:");
+    logger->info("  lidar_height: {}", sc->LIDAR_HEIGHT);
+    logger->info("  pc_num_ring: {}", sc->PC_NUM_RING);
+    logger->info("  pc_num_sector: {}", sc->PC_NUM_SECTOR);
+    logger->info("  pc_max_radius: {}", sc->PC_MAX_RADIUS);
+    logger->info("  sc_dist_threshold: {}", sc->SC_DIST_THRES);
+    logger->info("  min_movement_threshold: {}", min_movement_threshold);
+    logger->info("  inlier_fraction_threshold: {}", inlier_fraction_threshold);
     logger->info("ScanContext manager created");
 
     frame_count = 0;
@@ -118,7 +158,7 @@ public:
 
       for (const auto& odom_frame : odom_frames) {
         const Eigen::Isometry3d delta = last_T_odom_sensor.inverse() * odom_frame->T_world_sensor();
-        if (delta.translation().norm() < 1.0) {
+        if (delta.translation().norm() < min_movement_threshold) {
           // Do not insert the frame into the ScanContext manager while the sensor is stopping
           continue;
         }
@@ -231,12 +271,12 @@ public:
     graph.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(0, gtsam::Pose3::Identity(), gtsam::noiseModel::Isotropic::Precision(6, 1e6));
 
     auto factor = gtsam::make_shared<gtsam_points::IntegratedGICPFactor>(0, 1, frame1, frame2);
-    factor->set_num_threads(4);
+    factor->set_num_threads(icp_num_threads);
     graph.add(factor);
 
     gtsam_points::LevenbergMarquardtExtParams lm_params;
     lm_params.setlambdaInitial(1e-12);
-    lm_params.setMaxIterations(5);
+    lm_params.setMaxIterations(icp_max_iterations);
     lm_params.callback = [this](const gtsam_points::LevenbergMarquardtOptimizationStatus& status, const gtsam::Values& values) { logger->info(status.to_string()); };
     gtsam_points::LevenbergMarquardtOptimizerExt optimizer(graph, values, lm_params);
     values = optimizer.optimize();
@@ -245,7 +285,7 @@ public:
 
     logger->debug("inliear_fraction={}", factor->inlier_fraction());
 
-    return factor->inlier_fraction() > 0.85;
+    return factor->inlier_fraction() > inlier_fraction_threshold;
   }
 
 private:
@@ -264,6 +304,12 @@ private:
   std::thread thread;
 
   std::unique_ptr<SCManager> sc;
+
+  // Configurable parameters
+  double min_movement_threshold;
+  double inlier_fraction_threshold;
+  int icp_max_iterations;
+  int icp_num_threads;
 
   std::shared_ptr<spdlog::logger> logger;
 };
