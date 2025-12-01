@@ -192,6 +192,24 @@ if(BUILD_WITH_VIEWER)
   )
 
   list(APPEND glim_LIBRARIES standard_viewer interactive_viewer memory_monitor map_editor)
+
+  # Gravity estimator extension module
+  set(GRAVITY_ESTIMATOR_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../glim_ext/modules/odometry/gravity_estimator")
+  if(EXISTS "${GRAVITY_ESTIMATOR_SRC_DIR}")
+    add_library(gravity_estimator SHARED
+      ${GRAVITY_ESTIMATOR_SRC_DIR}/src/glim_ext/gravity_alignment_factor.cpp
+      ${GRAVITY_ESTIMATOR_SRC_DIR}/src/glim_ext/gravity_estimator.cpp
+      ${GRAVITY_ESTIMATOR_SRC_DIR}/src/glim_ext/gravity_estimator_export.cpp
+      ${GRAVITY_ESTIMATOR_SRC_DIR}/src/glim_ext/gravity_estimator_create.cpp
+    )
+    target_include_directories(gravity_estimator PRIVATE
+      ${GRAVITY_ESTIMATOR_SRC_DIR}/include
+    )
+    target_link_libraries(gravity_estimator
+      glim
+    )
+    list(APPEND glim_LIBRARIES gravity_estimator)
+  endif()
 endif()
 
 #############
