@@ -206,8 +206,10 @@ GlimROS::GlimROS(const rclcpp::NodeOptions& options) : Node("glim_ros", options)
   qos = get_qos_settings(config_ros, "glim_ros", "points_qos");
   points_sub = this->create_subscription<sensor_msgs::msg::PointCloud2>(points_topic, qos, std::bind(&GlimROS::points_callback, this, _1));
 #ifdef BUILD_WITH_CV_BRIDGE
-  qos = get_qos_settings(config_ros, "glim_ros", "image_qos");
-  image_sub = image_transport::create_subscription(this, image_topic, std::bind(&GlimROS::image_callback, this, _1), "raw", qos.get_rmw_qos_profile());
+  if (!image_topic.empty()) {
+    qos = get_qos_settings(config_ros, "glim_ros", "image_qos");
+    image_sub = image_transport::create_subscription(this, image_topic, std::bind(&GlimROS::image_callback, this, _1), "raw", qos.get_rmw_qos_profile());
+  }
 #endif
 
   for (const auto& sub : this->extension_subscriptions()) {

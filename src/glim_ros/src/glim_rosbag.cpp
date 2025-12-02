@@ -61,7 +61,18 @@ int main(int argc, char** argv) {
   const std::string imu_topic = config_ros.param<std::string>("glim_ros", "imu_topic", "/imu");
   const std::string points_topic = config_ros.param<std::string>("glim_ros", "points_topic", "/points");
   const std::string image_topic = config_ros.param<std::string>("glim_ros", "image_topic", "/image");
+  const std::string rgb_image_topic = config_ros.param<std::string>("glim_ros", "rgb_image_topic", "");
   std::vector<std::string> topics = {imu_topic, points_topic, image_topic};
+  if (!rgb_image_topic.empty()) {
+    topics.push_back(rgb_image_topic);
+  }
+
+  // Create publisher for rgb_image_topic (for rviz_viewer's RGB colorizer)
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr rgb_image_pub;
+  if (!rgb_image_topic.empty()) {
+    rgb_image_pub = glim->create_publisher<sensor_msgs::msg::CompressedImage>(rgb_image_topic, 10);
+    spdlog::info("Created publisher for rgb_image_topic: {}", rgb_image_topic);
+  }
 
   rosbag2_storage::StorageFilter filter;
   spdlog::info("topics:");
@@ -162,9 +173,9 @@ int main(int argc, char** argv) {
 
     rclcpp::Serialization<sensor_msgs::msg::Imu> imu_serialization;
     rclcpp::Serialization<sensor_msgs::msg::PointCloud2> points_serialization;
+    rclcpp::Serialization<sensor_msgs::msg::CompressedImage> compressed_image_serialization;
 #ifdef BUILD_WITH_CV_BRIDGE
     rclcpp::Serialization<sensor_msgs::msg::Image> image_serialization;
-    rclcpp::Serialization<sensor_msgs::msg::CompressedImage> compressed_image_serialization;
 #endif
 
     while (reader.has_next()) {
@@ -262,6 +273,15 @@ int main(int argc, char** argv) {
         }
       }
 #endif
+
+      // Publish rgb_image_topic for rviz_viewer's RGB colorizer
+      if (rgb_image_pub && msg->topic_name == rgb_image_topic) {
+        if (topic_type == "sensor_msgs/msg/CompressedImage") {
+          auto compressed_image_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
+          compressed_image_serialization.deserialize_message(&serialized_msg, compressed_image_msg.get());
+          rgb_image_pub->publish(*compressed_image_msg);
+        }
+      }
 
       auto found = subscription_map.find(msg->topic_name);
       if (found != subscription_map.end()) {

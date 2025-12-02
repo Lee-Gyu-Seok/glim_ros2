@@ -64,7 +64,7 @@
     // Extension modules
     "extension_modules": [
       "libmemory_monitor.so",
-      "libstandard_viewer.so",
+      // "libstandard_viewer.so",  // Main UI viewer (disabled - use RViz instead)
       "librviz_viewer.so"
       // "libimu_validator.so"
     ],

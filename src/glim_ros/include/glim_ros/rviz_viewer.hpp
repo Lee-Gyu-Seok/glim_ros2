@@ -4,6 +4,7 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <deque>
 
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_ros/buffer.h>
@@ -27,9 +28,15 @@ class logger;
 namespace glim {
 
 class TrajectoryManager;
+struct ColorizedPointCloud;
 
 /**
  * @brief Rviz-based viewer
+ *
+ * This module publishes point clouds and poses to ROS topics for RViz visualization.
+ * RGB colorization is handled by librgb_colorizer_ros.so module, which stores colors
+ * as "rgb_colors" aux_attribute on point clouds. This viewer reads those colors
+ * and includes them in the published PointCloud2 messages.
  */
 class RvizViewer : public ExtensionModuleROS2 {
 public:
@@ -41,10 +48,16 @@ public:
 private:
   void set_callbacks();
   void odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, bool corrected);
+  void publish_colored_points(const ColorizedPointCloud& colorized);
   void globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& submaps);
   void invoke(const std::function<void()>& task);
 
   void spin_once();
+
+  // Convert point cloud with colors to PointCloud2 message
+  sensor_msgs::msg::PointCloud2::UniquePtr frame_to_colored_pointcloud2(
+    const std::string& frame_id, double stamp,
+    const gtsam_points::PointCloud& frame, const std::vector<uint32_t>& colors);
 
 private:
   std::atomic_bool kill_switch;

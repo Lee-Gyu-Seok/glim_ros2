@@ -12,6 +12,7 @@
 #include <glim/util/config.hpp>
 #include <glim/util/trajectory_manager.hpp>
 #include <glim/util/ros_cloud_converter.hpp>
+#include <glim_ros/rgb_colorizer_ros.hpp>
 
 namespace glim {
 
@@ -95,6 +96,11 @@ void RvizViewer::set_callbacks() {
   OdometryEstimationCallbacks::on_new_frame.add([this](const EstimationFrame::ConstPtr& new_frame) { odometry_new_frame(new_frame, false); });
   OdometryEstimationCallbacks::on_update_new_frame.add([this](const EstimationFrame::ConstPtr& new_frame) { odometry_new_frame(new_frame, true); });
   GlobalMappingCallbacks::on_update_submaps.add(std::bind(&RvizViewer::globalmap_on_update_submaps, this, _1));
+
+  // Subscribe to RGB colorizer callback for publishing colored point clouds
+  RGBColorizerCallbacks::on_frame_colorized.add([this](const ColorizedPointCloud& colorized) {
+    publish_colored_points(colorized);
+  });
 }
 
 void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, bool corrected) {
@@ -255,27 +261,9 @@ void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, 
     path_pub->publish(path_msg);
   }
 
-  auto& points_pub = !corrected ? this->points_pub : this->points_corrected_pub;
-  if (points_pub->get_subscription_count()) {
-    // Publish points in their own coordinate frame
-    std::string frame_id;
-    switch (new_frame->frame_id) {
-      case FrameID::LIDAR:
-        frame_id = lidar_frame_id;
-        break;
-      case FrameID::IMU:
-        frame_id = imu_frame_id;
-        break;
-      case FrameID::WORLD:
-        frame_id = map_frame_id;
-        break;
-    }
-
-    auto points = frame_to_pointcloud2(frame_id, new_frame->stamp, *new_frame->frame);
-    points_pub->publish(*points);
-
-    logger->debug("published points (stamp={} num_points={})", new_frame->stamp, new_frame->frame->size());
-  }
+  // Note: ~/points publishing is now handled by RGBColorizerCallbacks::on_frame_colorized
+  // This ensures colorization is complete before publishing
+  // The points_pub is only used directly when rgb_colorizer is disabled (see publish_colored_points)
 
   auto& aligned_points_pub = !corrected ? this->aligned_points_pub : this->aligned_points_corrected_pub;
   if (aligned_points_pub->get_subscription_count()) {
@@ -298,6 +286,78 @@ void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, 
   }
 }
 
+void RvizViewer::publish_colored_points(const ColorizedPointCloud& colorized) {
+  if (!points_pub || points_pub->get_subscription_count() == 0) {
+    return;
+  }
+
+  if (colorized.points.empty()) {
+    return;
+  }
+
+  // Map frame_id string to configured frame IDs
+  std::string frame_id;
+  if (colorized.frame_id == "lidar") {
+    frame_id = lidar_frame_id;
+  } else if (colorized.frame_id == "imu") {
+    frame_id = imu_frame_id;
+  } else {
+    frame_id = map_frame_id;
+  }
+
+  // Create PointCloud2 message with RGB colors
+  auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+  msg->header.frame_id = frame_id;
+  msg->header.stamp.sec = static_cast<int32_t>(colorized.stamp);
+  msg->header.stamp.nanosec = static_cast<uint32_t>((colorized.stamp - msg->header.stamp.sec) * 1e9);
+
+  msg->height = 1;
+  msg->width = colorized.points.size();
+  msg->is_bigendian = false;
+  msg->is_dense = false;
+
+  // Define fields: x, y, z, rgb
+  sensor_msgs::msg::PointField field_x, field_y, field_z, field_rgb;
+  field_x.name = "x";
+  field_x.offset = 0;
+  field_x.datatype = sensor_msgs::msg::PointField::FLOAT32;
+  field_x.count = 1;
+
+  field_y.name = "y";
+  field_y.offset = 4;
+  field_y.datatype = sensor_msgs::msg::PointField::FLOAT32;
+  field_y.count = 1;
+
+  field_z.name = "z";
+  field_z.offset = 8;
+  field_z.datatype = sensor_msgs::msg::PointField::FLOAT32;
+  field_z.count = 1;
+
+  field_rgb.name = "rgb";
+  field_rgb.offset = 12;
+  field_rgb.datatype = sensor_msgs::msg::PointField::FLOAT32;
+  field_rgb.count = 1;
+
+  msg->fields = {field_x, field_y, field_z, field_rgb};
+  msg->point_step = 16;
+  msg->row_step = msg->point_step * msg->width;
+  msg->data.resize(msg->row_step * msg->height);
+
+  // Fill data
+  for (size_t i = 0; i < colorized.points.size(); i++) {
+    float* ptr = reinterpret_cast<float*>(msg->data.data() + i * msg->point_step);
+    ptr[0] = static_cast<float>(colorized.points[i].x());
+    ptr[1] = static_cast<float>(colorized.points[i].y());
+    ptr[2] = static_cast<float>(colorized.points[i].z());
+    // Pack RGB as float
+    uint32_t rgb = colorized.colors[i];
+    memcpy(&ptr[3], &rgb, sizeof(float));
+  }
+
+  points_pub->publish(std::move(*msg));
+  logger->debug("published colored points (stamp={} num_points={})", colorized.stamp, colorized.points.size());
+}
+
 void RvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& submaps) {
   const SubMap::ConstPtr latest_submap = submaps.back();
 
@@ -309,7 +369,7 @@ void RvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& sub
   }
 
   std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>> submap_poses(submaps.size());
-  for (int i = 0; i < submaps.size(); i++) {
+  for (size_t i = 0; i < submaps.size(); i++) {
     submap_poses[i] = submaps[i]->T_world_origin;
   }
 
@@ -343,7 +403,7 @@ void RvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& sub
     merged->points = merged->points_storage.data();
 
     int begin = 0;
-    for (int i = 0; i < this->submaps.size(); i++) {
+    for (size_t i = 0; i < this->submaps.size(); i++) {
       const auto& submap = this->submaps[i];
       std::transform(submap->points, submap->points + submap->size(), merged->points + begin, [&](const Eigen::Vector4d& p) { return submap_poses[i] * p; });
       begin += submap->size();
@@ -370,6 +430,66 @@ void RvizViewer::spin_once() {
   for (const auto& task : invoke_queue) {
     task();
   }
+}
+
+sensor_msgs::msg::PointCloud2::UniquePtr RvizViewer::frame_to_colored_pointcloud2(
+  const std::string& frame_id, double stamp,
+  const gtsam_points::PointCloud& frame, const std::vector<uint32_t>& colors) {
+
+  auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+  msg->header.frame_id = frame_id;
+  msg->header.stamp = from_sec(stamp);
+
+  msg->height = 1;
+  msg->width = frame.size();
+  msg->is_dense = false;
+  msg->is_bigendian = false;
+
+  // Fields: x, y, z, rgb
+  sensor_msgs::msg::PointField field;
+  field.name = "x";
+  field.offset = 0;
+  field.datatype = sensor_msgs::msg::PointField::FLOAT32;
+  field.count = 1;
+  msg->fields.push_back(field);
+
+  field.name = "y";
+  field.offset = 4;
+  msg->fields.push_back(field);
+
+  field.name = "z";
+  field.offset = 8;
+  msg->fields.push_back(field);
+
+  field.name = "rgb";
+  field.offset = 12;
+  field.datatype = sensor_msgs::msg::PointField::FLOAT32;
+  msg->fields.push_back(field);
+
+  msg->point_step = 16;
+  msg->row_step = msg->point_step * msg->width;
+  msg->data.resize(msg->row_step);
+
+  uint8_t* ptr = msg->data.data();
+  for (int i = 0; i < frame.size(); i++) {
+    float x = static_cast<float>(frame.points[i].x());
+    float y = static_cast<float>(frame.points[i].y());
+    float z = static_cast<float>(frame.points[i].z());
+
+    std::memcpy(ptr, &x, sizeof(float));
+    std::memcpy(ptr + 4, &y, sizeof(float));
+    std::memcpy(ptr + 8, &z, sizeof(float));
+
+    // Pack RGB as float (RViz convention)
+    uint32_t rgb = colors[i];
+    float rgb_float;
+    std::memcpy(&rgb_float, &rgb, sizeof(float));
+    std::memcpy(ptr + 12, &rgb_float, sizeof(float));
+
+    ptr += msg->point_step;
+  }
+
+  return msg;
 }
 
 }  // namespace glim

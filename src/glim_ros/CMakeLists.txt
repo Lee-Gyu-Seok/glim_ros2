@@ -25,6 +25,7 @@ endif()
 
 if(BUILD_WITH_CV_BRIDGE)
   add_definitions(-DBUILD_WITH_CV_BRIDGE)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d)
 endif()
 
 if(BUILD_WITH_CUDA)
@@ -54,9 +55,30 @@ target_link_libraries(glim_ros
 )
 rclcpp_components_register_nodes(glim_ros "glim::GlimROS")
 
+# RGB colorizer module (requires cv_bridge)
+# Must be defined before rviz_viewer since it depends on it
+if(BUILD_WITH_CV_BRIDGE)
+  ament_auto_add_library(rgb_colorizer_ros SHARED
+    src/glim_ros/rgb_colorizer_ros.cpp
+  )
+  target_link_libraries(rgb_colorizer_ros
+    glim::glim
+    ${OpenCV_LIBS}
+  )
+endif()
+
 ament_auto_add_library(rviz_viewer SHARED
   src/glim_ros/rviz_viewer.cpp
 )
+target_link_libraries(rviz_viewer
+  glim::glim
+)
+# Link to rgb_colorizer_ros for RGBColorizerCallbacks symbol
+if(BUILD_WITH_CV_BRIDGE)
+  target_link_libraries(rviz_viewer
+    rgb_colorizer_ros
+  )
+endif()
 
 ### glim_rosnode ###
 ament_auto_add_executable(glim_rosnode
@@ -104,5 +126,9 @@ if(BUILD_WITH_VIEWER)
     Boost::program_options
   )
 endif()
+
+install(DIRECTORY rviz
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_auto_package()

@@ -21,14 +21,22 @@
     // Extension modules
     "extension_modules": [
       "libmemory_monitor.so",
-      "libstandard_viewer.so",
+      // "libstandard_viewer.so",  // Main UI viewer (disabled - use RViz instead)
+      "librgb_colorizer_ros.so",  // RGB colorizer (must be before rviz_viewer)
+      "librviz_viewer.so",
       "libscan_context_loop_detector.so",
       "libgravity_estimator.so"
     ],
     // Topics for MLX
     "imu_topic": "/spadi/imu",
     "points_topic": "/spadi/pointcloud",
-    "image_topic": "/image",
+    "image_topic": "",
+    // RGB colorizer settings
+    "rgb_colorizer_enabled": true,
+    "rgb_image_topic": "/spadi/rgb_image/image_raw/compressed",
+    "rgb_calibration_file": "/home/soslab/Documents/bags/Pangyo_indoor_parking_lot_slam_2025_11_19-19_31_37/calibration_params.json",
+    "rgb_sync_tolerance": 0.03,
+    "rgb_max_buffer_size": 30,
     // QoS options
     "imu_qos": {
       "profile": "sensor_data",
