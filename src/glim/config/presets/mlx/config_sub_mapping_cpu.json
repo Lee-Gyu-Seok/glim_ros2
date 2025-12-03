@@ -4,14 +4,14 @@
   */
   "sub_mapping": {
     "so_name": "libsub_mapping.so",
-    "enable_imu": true,
+    "enable_imu": false,
     "enable_optimization": false,
     // Keyframe update strategy
-    "max_num_keyframes": 15,
+    "max_num_keyframes": 10,
     "keyframe_update_strategy": "DISPLACEMENT",
     "keyframe_update_min_points": 500,
     "keyframe_update_interval_rot": 1.57,
-    "keyframe_update_interval_trans": 1.0,
+    "keyframe_update_interval_trans": 0.7,
     "max_keyframe_overlap": 0.7,
     // Relative pose factors
     "create_between_factors": true,

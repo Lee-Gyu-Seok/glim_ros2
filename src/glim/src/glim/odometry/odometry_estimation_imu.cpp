@@ -4,7 +4,9 @@
 
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 #include <gtsam/nonlinear/LinearContainerFactor.h>
+#include <gtsam/linear/NoiseModel.h>
 
 #include <gtsam_points/types/point_cloud_cpu.hpp>
 #include <gtsam_points/factors/linear_damping_factor.hpp>
@@ -205,6 +207,7 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
 
     // Prior for initial IMU states
     new_factors.emplace_shared<gtsam_points::LinearDampingFactor>(X(0), 6, params->init_pose_damping_scale);
+    new_factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), gtsam::Pose3(new_frame->T_world_imu.matrix()), gtsam::noiseModel::Isotropic::Precision(6, 1e6));
     new_factors.emplace_shared<gtsam::PriorFactor<gtsam::Vector3>>(V(0), init_state->v_world_imu, gtsam::noiseModel::Isotropic::Precision(3, 1.0));
     new_factors.emplace_shared<gtsam_points::LinearDampingFactor>(B(0), 6, 1e6);
     new_factors.add(create_factors(current, nullptr, new_values));
@@ -394,17 +397,24 @@ void OdometryEstimationIMU::update_smoother(
   const gtsam::Values& new_values,
   const std::map<std::uint64_t, double>& new_stamp,
   int update_count) {
+  try {
 #ifdef GTSAM_USE_TBB
-  auto arena = static_cast<tbb::task_arena*>(tbb_task_arena.get());
-  arena->execute([&] {
+    auto arena = static_cast<tbb::task_arena*>(tbb_task_arena.get());
+    arena->execute([&] {
 #endif
-    smoother->update(new_factors, new_values, new_stamp);
-    for (int i = 0; i < update_count; i++) {
-      smoother->update();
-    }
+      smoother->update(new_factors, new_values, new_stamp);
+      for (int i = 0; i < update_count; i++) {
+        smoother->update();
+      }
 #ifdef GTSAM_USE_TBB
-  });
+    });
 #endif
+  } catch (const std::exception& e) {
+    logger->error("an exception was caught during odometry smoother update!!");
+    logger->error(e.what());
+    Callbacks::on_smoother_corruption(frames.back()->stamp);
+    fallback_smoother();
+  }
 }
 
 void OdometryEstimationIMU::update_smoother(int count) {
