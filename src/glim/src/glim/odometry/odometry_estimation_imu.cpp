@@ -100,6 +100,9 @@ OdometryEstimationIMU::OdometryEstimationIMU(std::unique_ptr<OdometryEstimationI
   isam2_params.relinearizeSkip = params->isam2_relinearize_skip;
   isam2_params.setRelinearizeThreshold(params->isam2_relinearize_thresh);
   smoother.reset(new FixedLagSmootherExt(params->smoother_lag, isam2_params));
+  // Fix X (Pose3), V (Vector3), B (imuBias=Vector6) variables during fallback recovery
+  // Type: 0=Pose3, 1=Vector3
+  smoother->set_fix_variable_types({{'x', 0}, {'v', 1}});
 
 #ifdef GTSAM_USE_TBB
   tbb_task_arena = std::make_shared<tbb::task_arena>(params->num_smoother_update_threads);
@@ -381,12 +384,17 @@ void OdometryEstimationIMU::update_frames(int current, const gtsam::NonlinearFac
       frames[i]->T_world_lidar = T_world_imu * T_imu_lidar;
       frames[i]->v_world_imu = v_world_imu;
       frames[i]->imu_bias = imu_bias;
-    } catch (std::out_of_range& e) {
-      logger->error("caught {}", e.what());
+    } catch (const std::exception& e) {
+      logger->error("caught exception in update_frames: {}", e.what());
       logger->error("current={}", current);
       logger->error("marginalized_cursor={}", marginalized_cursor);
       Callbacks::on_smoother_corruption(frames[current]->stamp);
-      fallback_smoother();
+      try {
+        fallback_smoother();
+      } catch (const std::exception& e2) {
+        logger->error("fallback_smoother also failed: {}", e2.what());
+        logger->warn("keeping previous frame estimates");
+      }
       break;
     }
   }
@@ -413,7 +421,12 @@ void OdometryEstimationIMU::update_smoother(
     logger->error("an exception was caught during odometry smoother update!!");
     logger->error(e.what());
     Callbacks::on_smoother_corruption(frames.back()->stamp);
-    fallback_smoother();
+    try {
+      fallback_smoother();
+    } catch (const std::exception& e2) {
+      logger->error("fallback_smoother also failed: {}", e2.what());
+      logger->warn("continuing with previous smoother state");
+    }
   }
 }
 

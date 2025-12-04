@@ -328,8 +328,33 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
     }
   }
 
-  smoother.reset(new IncrementalFixedLagSmootherExt(smoother->smootherLag(), smoother->params()));
-  smoother->update(new_factors, values, new_stamps);
+  const double saved_smoother_lag = smoother->smootherLag();
+  const auto saved_params = smoother->params();
+  smoother.reset(new IncrementalFixedLagSmootherExt(saved_smoother_lag, saved_params));
+
+  try {
+    smoother->update(new_factors, values, new_stamps);
+  } catch (const std::exception& e) {
+    std::cerr << "error: exception during fallback smoother reinitialization!!" << std::endl;
+    std::cerr << "     : " << e.what() << std::endl;
+    std::cerr << "     : adding stronger damping factors and retrying..." << std::endl;
+
+    // Add stronger damping factors to all variables
+    for (const auto& value : values) {
+      const int dim = value.value.dim();
+      new_factors.emplace_shared<gtsam_points::LinearDampingFactor>(value.key, dim, 1e10);
+    }
+
+    smoother.reset(new IncrementalFixedLagSmootherExt(saved_smoother_lag, saved_params));
+    try {
+      smoother->update(new_factors, values, new_stamps);
+    } catch (const std::exception& e2) {
+      std::cerr << "error: fallback smoother reinitialization failed again!!" << std::endl;
+      std::cerr << "     : " << e2.what() << std::endl;
+      // Keep the smoother in a valid but empty state
+      smoother.reset(new IncrementalFixedLagSmootherExt(saved_smoother_lag, saved_params));
+    }
+  }
 }
 
 }  // namespace gtsam_points

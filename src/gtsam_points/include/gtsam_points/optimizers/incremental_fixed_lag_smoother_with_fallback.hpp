@@ -36,18 +36,28 @@ public:
 
       return value;
     } catch (std::exception& e) {
-      std::cerr << "warning: an exception was caught in fixed-lag smoother update!!" << std::endl;
+      std::cerr << "warning: an exception was caught in fixed-lag smoother calculateEstimate!!" << std::endl;
       std::cerr << "       : " << e.what() << std::endl;
 
       fallback_smoother();
 
-      const auto& value = smoother->calculateEstimate(key);
-      auto found = values.find(key);
-      if (found != values.end()) {
-        found->value = value;
+      try {
+        const auto& value = smoother->calculateEstimate(key);
+        auto found = values.find(key);
+        if (found != values.end()) {
+          found->value = value;
+        }
+        return value.cast<VALUE>();
+      } catch (std::exception& e2) {
+        std::cerr << "error: exception after fallback in calculateEstimate!!" << std::endl;
+        std::cerr << "     : " << e2.what() << std::endl;
+        // Return cached value if available
+        auto found = values.find(key);
+        if (found != values.end()) {
+          return found->value.cast<VALUE>();
+        }
+        throw;  // Re-throw if no cached value
       }
-
-      return value.cast<VALUE>();
     }
   }
 

@@ -8,6 +8,7 @@
 #include <gtsam/base/serialization.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/slam/BetweenFactor.h>
+#include <gtsam/slam/PriorFactor.h>
 #include <gtsam/slam/PoseRotationPrior.h>
 #include <gtsam/slam/PoseTranslationPrior.h>
 #include <gtsam/navigation/ImuBias.h>
@@ -136,7 +137,15 @@ void GlobalMapping::insert_submap(const SubMap::Ptr& submap) {
 
   if (current != 0) {
     if (isam2->valueExists(X(last))) {
-      last_T_world_submap = isam2->calculateEstimate<gtsam::Pose3>(X(last));
+      try {
+        last_T_world_submap = isam2->calculateEstimate<gtsam::Pose3>(X(last));
+      } catch (const gtsam::IndeterminantLinearSystemException& e) {
+        logger->warn("IndeterminantLinearSystemException when getting X({}) estimate, using linearization point", last);
+        last_T_world_submap = isam2->getLinearizationPoint().at<gtsam::Pose3>(X(last));
+      } catch (const std::exception& e) {
+        logger->warn("Exception when getting X({}) estimate: {}, using linearization point", last, e.what());
+        last_T_world_submap = isam2->getLinearizationPoint().at<gtsam::Pose3>(X(last));
+      }
     } else {
       last_T_world_submap = new_values->at<gtsam::Pose3>(X(last));
     }
@@ -485,11 +494,31 @@ boost::shared_ptr<gtsam::NonlinearFactorGraph> GlobalMapping::create_matching_co
 
 void GlobalMapping::update_submaps() {
   for (int i = 0; i < submaps.size(); i++) {
-    submaps[i]->T_world_origin = Eigen::Isometry3d(isam2->calculateEstimate<gtsam::Pose3>(X(i)).matrix());
+    try {
+      submaps[i]->T_world_origin = Eigen::Isometry3d(isam2->calculateEstimate<gtsam::Pose3>(X(i)).matrix());
+    } catch (const gtsam::IndeterminantLinearSystemException& e) {
+      logger->warn("IndeterminantLinearSystemException when updating submap X({}), using linearization point", i);
+      try {
+        submaps[i]->T_world_origin = Eigen::Isometry3d(isam2->getLinearizationPoint().at<gtsam::Pose3>(X(i)).matrix());
+      } catch (const std::exception& e2) {
+        logger->warn("Failed to get linearization point for X({}), keeping previous pose", i);
+      }
+    } catch (const std::exception& e) {
+      logger->warn("Exception when updating submap X({}): {}, using linearization point", i, e.what());
+      try {
+        submaps[i]->T_world_origin = Eigen::Isometry3d(isam2->getLinearizationPoint().at<gtsam::Pose3>(X(i)).matrix());
+      } catch (const std::exception& e2) {
+        logger->warn("Failed to get linearization point for X({}), keeping previous pose", i);
+      }
+    }
   }
 }
 
 gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearFactorGraph& new_factors, const gtsam::Values& new_values) {
+  // Static counter to prevent infinite recursion
+  static thread_local int recovery_depth = 0;
+  const int max_recovery_depth = 3;
+
   gtsam_points::ISAM2ResultExt result;
 
   gtsam::Key indeterminant_nearby_key = 0;
@@ -512,15 +541,34 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
   }
 
   if (indeterminant_nearby_key != 0) {
+    // Check recursion depth to prevent infinite loops
+    if (recovery_depth >= max_recovery_depth) {
+      logger->error("max recovery depth reached, skipping isam2 update");
+      recovery_depth = 0;
+      return result;
+    }
+    recovery_depth++;
+
     const gtsam::Symbol symbol(indeterminant_nearby_key);
     if (symbol.chr() == 'v' || symbol.chr() == 'b' || symbol.chr() == 'e') {
       indeterminant_nearby_key = X(symbol.index() / 2);
     }
-    logger->warn("insert a damping factor at {} to prevent corruption", std::string(gtsam::Symbol(indeterminant_nearby_key)));
+    logger->warn("insert a damping factor at {} to prevent corruption (recovery depth: {})", std::string(gtsam::Symbol(indeterminant_nearby_key)), recovery_depth);
 
     gtsam::Values values = isam2->getLinearizationPoint();
     gtsam::NonlinearFactorGraph factors = isam2->getFactorsUnsafe();
-    factors.emplace_shared<gtsam_points::LinearDampingFactor>(indeterminant_nearby_key, 6, 1e3);
+
+    // Add stronger damping factor
+    factors.emplace_shared<gtsam_points::LinearDampingFactor>(indeterminant_nearby_key, 6, 1e6);
+
+    // For x0, also add a PriorFactor to strongly constrain it
+    if (gtsam::Symbol(indeterminant_nearby_key) == gtsam::Symbol('x', 0)) {
+      if (values.exists(X(0))) {
+        gtsam::Pose3 current_pose = values.at<gtsam::Pose3>(X(0));
+        factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), current_pose, gtsam::noiseModel::Isotropic::Precision(6, 1e6));
+        logger->warn("added PriorFactor for x0 to prevent corruption");
+      }
+    }
 
     gtsam::ISAM2Params isam2_params;
     if (params.use_isam2_dogleg) {
@@ -537,9 +585,12 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
     }
 
     logger->warn("reset isam2");
-    return update_isam2(factors, values);
+    result = update_isam2(factors, values);
+    recovery_depth = 0;  // Reset on successful recovery
+    return result;
   }
 
+  recovery_depth = 0;  // Reset on successful update
   return result;
 }
 
@@ -571,7 +622,18 @@ void GlobalMapping::save(const std::string& path) {
 
   logger->info("serializing factor graph to {}/graph.bin", path);
   serializeToBinaryFile(serializable_factors, path + "/graph.bin");
-  serializeToBinaryFile(isam2->calculateEstimate(), path + "/values.bin");
+
+  gtsam::Values values_to_save;
+  try {
+    values_to_save = isam2->calculateEstimate();
+  } catch (const gtsam::IndeterminantLinearSystemException& e) {
+    logger->warn("IndeterminantLinearSystemException when calculating estimate for save, using linearization point");
+    values_to_save = isam2->getLinearizationPoint();
+  } catch (const std::exception& e) {
+    logger->warn("Exception when calculating estimate for save: {}, using linearization point", e.what());
+    values_to_save = isam2->getLinearizationPoint();
+  }
+  serializeToBinaryFile(values_to_save, path + "/values.bin");
 
   std::ofstream ofs(path + "/graph.txt");
   ofs << "num_submaps: " << submaps.size() << std::endl;
@@ -876,7 +938,17 @@ bool GlobalMapping::load(const std::string& path) {
 }
 
 void GlobalMapping::recover_graph() {
-  const auto recovered = recover_graph(isam2->getFactorsUnsafe(), isam2->calculateEstimate(), 0);
+  gtsam::Values current_values;
+  try {
+    current_values = isam2->calculateEstimate();
+  } catch (const gtsam::IndeterminantLinearSystemException& e) {
+    logger->warn("IndeterminantLinearSystemException when calculating estimate for recover_graph, using linearization point");
+    current_values = isam2->getLinearizationPoint();
+  } catch (const std::exception& e) {
+    logger->warn("Exception when calculating estimate for recover_graph: {}, using linearization point", e.what());
+    current_values = isam2->getLinearizationPoint();
+  }
+  const auto recovered = recover_graph(isam2->getFactorsUnsafe(), current_values, 0);
   update_isam2(recovered.first, recovered.second);
 }
 
