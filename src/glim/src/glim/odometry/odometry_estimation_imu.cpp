@@ -326,6 +326,22 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
   update_smoother(new_factors, new_values, new_stamps, 1);
   Callbacks::on_smoother_update_finish(*smoother);
 
+  // Check if fallback happened and sync marginalized_cursor with smoother
+  if (smoother->fallbackHappened()) {
+    int min_valid_idx = smoother->getMinKeyIndex('x');
+    if (min_valid_idx > marginalized_cursor) {
+      logger->warn("Fallback detected: syncing marginalized_cursor from {} to {}", marginalized_cursor, min_valid_idx);
+      // Mark frames between old cursor and new min as marginalized
+      for (int i = marginalized_cursor; i < min_valid_idx && i < frames.size(); i++) {
+        if (frames[i]) {
+          marginalized_frames.push_back(frames[i]);
+          frames[i].reset();
+        }
+      }
+      marginalized_cursor = min_valid_idx;
+    }
+  }
+
   // Find out marginalized frames
   while (marginalized_cursor < current) {
     double span = frames[current]->stamp - frames[marginalized_cursor]->stamp;
@@ -391,6 +407,17 @@ void OdometryEstimationIMU::update_frames(int current, const gtsam::NonlinearFac
       Callbacks::on_smoother_corruption(frames[current]->stamp);
       try {
         fallback_smoother();
+        // Sync marginalized_cursor with smoother after fallback
+        int min_valid_idx = smoother->getMinKeyIndex('x');
+        if (min_valid_idx > marginalized_cursor) {
+          logger->warn("update_frames fallback: syncing marginalized_cursor from {} to {}", marginalized_cursor, min_valid_idx);
+          for (int j = marginalized_cursor; j < min_valid_idx && j < static_cast<int>(frames.size()); j++) {
+            if (frames[j]) {
+              frames[j].reset();
+            }
+          }
+          marginalized_cursor = min_valid_idx;
+        }
       } catch (const std::exception& e2) {
         logger->error("fallback_smoother also failed: {}", e2.what());
         logger->warn("keeping previous frame estimates");
@@ -423,6 +450,17 @@ void OdometryEstimationIMU::update_smoother(
     Callbacks::on_smoother_corruption(frames.back()->stamp);
     try {
       fallback_smoother();
+      // Sync marginalized_cursor with smoother after fallback
+      int min_valid_idx = smoother->getMinKeyIndex('x');
+      if (min_valid_idx > marginalized_cursor) {
+        logger->warn("update_smoother fallback: syncing marginalized_cursor from {} to {}", marginalized_cursor, min_valid_idx);
+        for (int j = marginalized_cursor; j < min_valid_idx && j < static_cast<int>(frames.size()); j++) {
+          if (frames[j]) {
+            frames[j].reset();
+          }
+        }
+        marginalized_cursor = min_valid_idx;
+      }
     } catch (const std::exception& e2) {
       logger->error("fallback_smoother also failed: {}", e2.what());
       logger->warn("continuing with previous smoother state");

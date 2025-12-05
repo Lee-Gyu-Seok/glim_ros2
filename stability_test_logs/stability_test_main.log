@@ -1,0 +1,16 @@
+[2025-12-05 03:08:19] ============================================================
+[2025-12-05 03:08:19] GLIM STABILITY TEST STARTED
+[2025-12-05 03:08:19] Test will run for 5 hours
+[2025-12-05 03:08:19] Bag file: /home/soslab/Documents/bags/Pangyo_indoor_parking_lot_slam_2025_11_19-19_31_37
+[2025-12-05 03:08:19] Log directory: /home/soslab/colcon_ws/src/glim_ros2/stability_test_logs
+[2025-12-05 03:08:19] ============================================================
+[2025-12-05 03:08:24] === Starting Run #1 ===
+[2025-12-05 03:16:22] Run #1 FAILED (code: -15, errors: True)
+[2025-12-05 03:16:22] Time remaining: 4.87 hours
+[2025-12-05 03:16:32] === Starting Run #2 ===
+[2025-12-05 14:56:31] Run #2 FAILED (code: -15, errors: True)
+[2025-12-05 14:56:33] ============================================================
+[2025-12-05 14:56:33] STABILITY TEST COMPLETED
+[2025-12-05 14:56:33] ============================================================
+[2025-12-05 14:56:33] Results saved to /home/soslab/colcon_ws/src/glim_ros2/stability_test_logs/stability_test_results_20251205_145633.json
+[2025-12-05 14:56:33] Report saved to /home/soslab/colcon_ws/src/glim_ros2/stability_test_logs/stability_test_report_20251205_145633.txt

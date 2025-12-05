@@ -75,20 +75,41 @@ gtsam::Values IncrementalFixedLagSmootherExtWithFallback::calculateEstimate() co
 }
 
 const gtsam::Value& IncrementalFixedLagSmootherExtWithFallback::calculateEstimate(gtsam::Key key) const {
+  // First check if key exists in our cached values (for marginalized keys)
+  auto cached = values.find(key);
+
   try {
     const auto& value = smoother->calculateEstimate(key);
-    auto found = values.find(key);
-    if (found != values.end()) {
-      found->value = value;
+    if (cached != values.end()) {
+      cached->value = value;
     }
 
     return value;
+  } catch (const gtsam::ValuesKeyDoesNotExist& e) {
+    // Key was marginalized out - return cached value if available
+    std::cerr << "warning: key " << gtsam::Symbol(key) << " does not exist (marginalized), ";
+    if (cached != values.end()) {
+      std::cerr << "returning cached value" << std::endl;
+      return cached->value;
+    }
+    std::cerr << "no cached value available" << std::endl;
+    throw;
   } catch (std::exception& e) {
     std::cerr << "warning: an exception was caught in fixed-lag smoother calculateEstimate!!" << std::endl;
     std::cerr << "       : " << e.what() << std::endl;
 
     fallback_smoother();
-    return smoother->calculateEstimate(key);
+
+    try {
+      return smoother->calculateEstimate(key);
+    } catch (const gtsam::ValuesKeyDoesNotExist& e2) {
+      // After fallback, key still doesn't exist - return cached value
+      if (cached != values.end()) {
+        std::cerr << "warning: returning cached value for " << gtsam::Symbol(key) << " after fallback" << std::endl;
+        return cached->value;
+      }
+      throw;
+    }
   }
 }
 

@@ -168,7 +168,10 @@ void GlobalMapping::insert_submap(const SubMap::Ptr& submap) {
   submap->drop_frame_points();
 
   if (current == 0) {
+    // Add both LinearDampingFactor and PriorFactor for the first submap to prevent IndeterminantLinearSystemException
     new_factors->emplace_shared<gtsam_points::LinearDampingFactor>(X(0), 6, params.init_pose_damping_scale);
+    // PriorFactor is essential to fully constrain the first pose in the factor graph
+    new_factors->emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), current_T_world_submap, gtsam::noiseModel::Isotropic::Precision(6, params.init_pose_damping_scale));
   } else {
     new_factors->add(*create_between_factors(current));
     new_factors->add(*create_matching_cost_factors(current));
@@ -522,6 +525,7 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
   gtsam_points::ISAM2ResultExt result;
 
   gtsam::Key indeterminant_nearby_key = 0;
+  bool values_key_error = false;
   try {
 #ifdef GTSAM_USE_TBB
     auto arena = static_cast<tbb::task_arena*>(tbb_task_arena.get());
@@ -535,6 +539,11 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
     logger->error("an indeterminant lienar system exception was caught during global map optimization!!");
     logger->error(e.what());
     indeterminant_nearby_key = e.nearbyVariable();
+  } catch (const gtsam::ValuesKeyDoesNotExist& e) {
+    logger->error("ValuesKeyDoesNotExist exception caught during global map optimization!!");
+    logger->error(e.what());
+    indeterminant_nearby_key = e.key();
+    values_key_error = true;
   } catch (const std::exception& e) {
     logger->error("an exception was caught during global map optimization!!");
     logger->error(e.what());
@@ -553,21 +562,41 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
     if (symbol.chr() == 'v' || symbol.chr() == 'b' || symbol.chr() == 'e') {
       indeterminant_nearby_key = X(symbol.index() / 2);
     }
-    logger->warn("insert a damping factor at {} to prevent corruption (recovery depth: {})", std::string(gtsam::Symbol(indeterminant_nearby_key)), recovery_depth);
+    logger->warn("insert a damping factor at {} to prevent corruption (recovery depth: {}, values_key_error: {})",
+                 std::string(gtsam::Symbol(indeterminant_nearby_key)), recovery_depth, values_key_error);
 
     gtsam::Values values = isam2->getLinearizationPoint();
     gtsam::NonlinearFactorGraph factors = isam2->getFactorsUnsafe();
 
+    // For ValuesKeyDoesNotExist error, we need to add the missing key to values
+    const gtsam::Symbol problem_symbol(indeterminant_nearby_key);
+    if (values_key_error && problem_symbol.chr() == 'x' && !values.exists(indeterminant_nearby_key)) {
+      const int submap_idx = problem_symbol.index();
+      if (submap_idx < static_cast<int>(submaps.size()) && submaps[submap_idx]) {
+        // Use the submap's current T_world_origin as the value
+        gtsam::Pose3 pose_from_submap(submaps[submap_idx]->T_world_origin.matrix());
+        values.insert(indeterminant_nearby_key, pose_from_submap);
+        logger->warn("added missing value for {} from submap T_world_origin", std::string(problem_symbol));
+      } else if (new_values.exists(indeterminant_nearby_key)) {
+        // Try to get from new_values
+        values.insert(indeterminant_nearby_key, new_values.at<gtsam::Pose3>(indeterminant_nearby_key));
+        logger->warn("added missing value for {} from new_values", std::string(problem_symbol));
+      } else {
+        // Fallback: use identity pose
+        values.insert(indeterminant_nearby_key, gtsam::Pose3::Identity());
+        logger->warn("added missing value for {} with identity pose (fallback)", std::string(problem_symbol));
+      }
+    }
+
     // Add stronger damping factor
     factors.emplace_shared<gtsam_points::LinearDampingFactor>(indeterminant_nearby_key, 6, 1e6);
 
-    // For x0, also add a PriorFactor to strongly constrain it
-    if (gtsam::Symbol(indeterminant_nearby_key) == gtsam::Symbol('x', 0)) {
-      if (values.exists(X(0))) {
-        gtsam::Pose3 current_pose = values.at<gtsam::Pose3>(X(0));
-        factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), current_pose, gtsam::noiseModel::Isotropic::Precision(6, 1e6));
-        logger->warn("added PriorFactor for x0 to prevent corruption");
-      }
+    // Add PriorFactor for the problematic node to strongly constrain it
+    // This is essential for both x0 and any other node that becomes underconstrained
+    if (problem_symbol.chr() == 'x' && values.exists(indeterminant_nearby_key)) {
+      gtsam::Pose3 current_pose = values.at<gtsam::Pose3>(indeterminant_nearby_key);
+      factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(indeterminant_nearby_key, current_pose, gtsam::noiseModel::Isotropic::Precision(6, 1e6));
+      logger->warn("added PriorFactor for {} to prevent corruption", std::string(problem_symbol));
     }
 
     gtsam::ISAM2Params isam2_params;

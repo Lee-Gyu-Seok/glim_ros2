@@ -2,6 +2,7 @@
 #include <mutex>
 #include <thread>
 #include <iostream>
+#include <set>
 #include <boost/format.hpp>
 #include <boost/filesystem.hpp>
 
@@ -76,6 +77,7 @@ public:
     inlier_fraction_threshold = config.param<double>("scan_context", "inlier_fraction_threshold", 0.7);
     icp_max_iterations = config.param<int>("scan_context", "icp_max_iterations", 5);
     icp_num_threads = config.param<int>("scan_context", "icp_num_threads", 4);
+    loop_noise_score = config.param<double>("scan_context", "loop_noise_score", 0.5);
 
     logger->info("ScanContext parameters:");
     logger->info("  lidar_height: {}", sc->LIDAR_HEIGHT);
@@ -87,6 +89,7 @@ public:
     logger->info("  sc_dist_threshold: {}", sc->SC_DIST_THRES);
     logger->info("  min_movement_threshold: {}", min_movement_threshold);
     logger->info("  inlier_fraction_threshold: {}", inlier_fraction_threshold);
+    logger->info("  loop_noise_score: {}", loop_noise_score);
     logger->info("ScanContext manager created");
 
     frame_count = 0;
@@ -188,10 +191,33 @@ public:
 
       // Validate loop candidates
       while (!loop_candidates.empty()) {
+        // Safety check: ensure submaps is not empty before accessing
+        if (submaps.empty()) {
+          break;
+        }
+
         const auto loop_candidate = loop_candidates.front();
-        const int frame_id1 = frame_index_map[std::get<0>(loop_candidate)];
-        const int frame_id2 = frame_index_map[std::get<1>(loop_candidate)];
+        const int sc_idx1 = std::get<0>(loop_candidate);
+        const int sc_idx2 = std::get<1>(loop_candidate);
         const double heading = std::get<2>(loop_candidate);
+
+        // Safety check: ensure frame_index_map contains the required keys
+        auto it1 = frame_index_map.find(sc_idx1);
+        auto it2 = frame_index_map.find(sc_idx2);
+        if (it1 == frame_index_map.end() || it2 == frame_index_map.end()) {
+          logger->warn("frame_index_map missing key: sc_idx1={}, sc_idx2={}", sc_idx1, sc_idx2);
+          loop_candidates.pop_front();
+          continue;
+        }
+
+        const int frame_id1 = it1->second;
+        const int frame_id2 = it2->second;
+
+        // Safety check: ensure submaps.back() has valid odom_frames
+        if (submaps.back()->odom_frames.empty()) {
+          logger->warn("latest submap has no odom_frames");
+          break;
+        }
 
         // The frame is newer than the latest submap
         if (frame_id1 > submaps.back()->odom_frames.back()->id) {
@@ -206,6 +232,15 @@ public:
 
         if (!submap1 || !submap2) {
           // Failed to find corresponding submaps
+          continue;
+        }
+
+        // Check for duplicate loop closures between the same submap pair
+        const int min_id = std::min(submap1->id, submap2->id);
+        const int max_id = std::max(submap1->id, submap2->id);
+        const auto loop_key = std::make_pair(min_id, max_id);
+        if (registered_loops.count(loop_key) > 0) {
+          logger->debug("skipping duplicate loop candidate=({}, {})", submap1->id, submap2->id);
           continue;
         }
 
@@ -227,10 +262,14 @@ public:
         }
 
         // TODO: should check if it's close to the current estimate?
-        logger->info("Loop detected!!");
+        logger->info("Loop detected!! ({}, {})", submap1->id, submap2->id);
+
+        // Register the loop to prevent duplicates
+        registered_loops.insert(loop_key);
+
         using gtsam::symbol_shorthand::X;
         // Use robust noise model (Cauchy) like SC-PGO to handle potential outliers
-        const double loop_noise_score = 0.5;
+        // Higher loop_noise_score = weaker constraint = more robust to outliers
         gtsam::Vector6 robust_noise_vec;
         robust_noise_vec << loop_noise_score, loop_noise_score, loop_noise_score, loop_noise_score, loop_noise_score, loop_noise_score;
         const auto base_noise = gtsam::noiseModel::Diagonal::Variances(robust_noise_vec);
@@ -312,6 +351,9 @@ private:
 
   std::vector<SubMap::ConstPtr> submaps;
 
+  // Track registered loop closures to prevent duplicates
+  std::set<std::pair<int, int>> registered_loops;
+
   std::atomic_bool kill_switch;
   std::thread thread;
 
@@ -322,6 +364,7 @@ private:
   double inlier_fraction_threshold;
   int icp_max_iterations;
   int icp_num_threads;
+  double loop_noise_score;  // Higher = weaker constraint, more robust to outliers
 
   std::shared_ptr<spdlog::logger> logger;
 };

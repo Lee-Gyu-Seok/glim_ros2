@@ -177,6 +177,9 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
     preprocessed->intensities.assign(frame->intensities, frame->intensities + frame->size());
   }
 
+  // Store raw (non-downsampled) points for RGB colorization
+  preprocessed->raw_points = raw_points;
+
   preprocessed->k_neighbors = params.k_correspondences;
   preprocessed->neighbors = find_neighbors(frame->points, frame->size(), params.k_correspondences);
 

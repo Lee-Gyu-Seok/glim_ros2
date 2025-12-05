@@ -35,8 +35,17 @@
     "rgb_colorizer_enabled": true,
     "rgb_image_topic": "/spadi/rgb_image/image_raw/compressed",
     "rgb_calibration_file": "/home/soslab/Documents/bags/Pangyo_indoor_parking_lot_slam_2025_11_19-19_31_37/calibration_params.json",
-    "rgb_sync_tolerance": 0.03,
+    "rgb_sync_tolerance": 2.0,
     "rgb_max_buffer_size": 30,
+    // Z-buffer occlusion handling (like merge_image_pointcloud)
+    "rgb_enable_z_buffer": true,           // Enable Z-buffer based occlusion handling
+    "rgb_splat_size_mode": "physical",     // "fixed", "adaptive" (depth-based), or "physical" (LiDAR angular resolution based)
+    "rgb_fixed_splat_size": 3,             // Splat size when mode is "fixed"
+    "rgb_lidar_angular_resolution": 0.2,   // LiDAR angular resolution in degrees (for "physical" mode)
+    // Image undistortion (better color quality via bilinear interpolation during remap)
+    "rgb_enable_undistort": true,          // Undistort image first, then use simple pinhole projection
+    // Motion compensation (correct for LiDAR-camera time difference using IMU trajectory)
+    "rgb_enable_motion_compensation": true,
     // QoS options
     "imu_qos": {
       "profile": "sensor_data",

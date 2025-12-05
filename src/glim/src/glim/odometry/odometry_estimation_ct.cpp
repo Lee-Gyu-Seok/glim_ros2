@@ -241,6 +241,22 @@ EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedF
 
   Callbacks::on_smoother_update_finish(*smoother);
 
+  // Check if fallback happened and sync marginalized_cursor with smoother
+  if (smoother->fallbackHappened()) {
+    int min_valid_idx = smoother->getMinKeyIndex('x');
+    if (min_valid_idx > marginalized_cursor) {
+      logger->warn("Fallback detected: syncing marginalized_cursor from {} to {}", marginalized_cursor, min_valid_idx);
+      // Mark frames between old cursor and new min as marginalized
+      for (int i = marginalized_cursor; i < min_valid_idx && i < frames.size(); i++) {
+        if (frames[i]) {
+          marginalized_frames.push_back(frames[i]);
+          frames[i].reset();
+        }
+      }
+      marginalized_cursor = min_valid_idx;
+    }
+  }
+
   // Find out marginalized frames
   while (marginalized_cursor < current) {
     double span = frames[current]->stamp - frames[marginalized_cursor]->stamp;

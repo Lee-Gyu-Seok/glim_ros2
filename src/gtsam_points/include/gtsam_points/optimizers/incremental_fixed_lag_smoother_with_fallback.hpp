@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <gtsam_points/optimizers/incremental_fixed_lag_smoother_ext.hpp>
+#include <gtsam/inference/Symbol.h>
 
 namespace gtsam_points {
 
@@ -21,20 +22,48 @@ public:
     const gtsam::FactorIndices& factorsToRemove = gtsam::FactorIndices()) override;
 
   bool fallbackHappened() const { return fallback_happend; }
+
+  // Get the minimum valid key index for a given symbol character
+  // Returns -1 if no keys exist for that character
+  int getMinKeyIndex(char symbol_char) const {
+    int min_idx = -1;
+    for (const auto& kv : stamps) {
+      gtsam::Symbol sym(kv.first);
+      if (sym.chr() == symbol_char) {
+        int idx = static_cast<int>(sym.index());
+        if (min_idx < 0 || idx < min_idx) {
+          min_idx = idx;
+        }
+      }
+    }
+    return min_idx;
+  }
+
   gtsam::Values calculateEstimate() const override;
 
   const gtsam::Value& calculateEstimate(gtsam::Key key) const;
 
   template <class VALUE>
   VALUE calculateEstimate(Key key) const {
+    // First check if key exists in our cached values (for marginalized keys)
+    auto cached = values.find(key);
+
     try {
       const VALUE value = smoother->calculateEstimate<VALUE>(key);
-      auto found = values.find(key);
-      if (found != values.end()) {
+      if (cached != values.end()) {
         values.insert_or_assign(key, value);
       }
 
       return value;
+    } catch (const gtsam::ValuesKeyDoesNotExist& e) {
+      // Key was marginalized out - return cached value if available
+      std::cerr << "warning: key " << gtsam::Symbol(key) << " does not exist (marginalized), ";
+      if (cached != values.end()) {
+        std::cerr << "returning cached value" << std::endl;
+        return cached->value.cast<VALUE>();
+      }
+      std::cerr << "no cached value available" << std::endl;
+      throw;
     } catch (std::exception& e) {
       std::cerr << "warning: an exception was caught in fixed-lag smoother calculateEstimate!!" << std::endl;
       std::cerr << "       : " << e.what() << std::endl;
@@ -43,18 +72,23 @@ public:
 
       try {
         const auto& value = smoother->calculateEstimate(key);
-        auto found = values.find(key);
-        if (found != values.end()) {
-          found->value = value;
+        if (cached != values.end()) {
+          cached->value = value;
         }
         return value.cast<VALUE>();
+      } catch (const gtsam::ValuesKeyDoesNotExist& e2) {
+        // After fallback, key still doesn't exist - return cached value
+        if (cached != values.end()) {
+          std::cerr << "warning: returning cached value for " << gtsam::Symbol(key) << " after fallback" << std::endl;
+          return cached->value.cast<VALUE>();
+        }
+        throw;
       } catch (std::exception& e2) {
         std::cerr << "error: exception after fallback in calculateEstimate!!" << std::endl;
         std::cerr << "     : " << e2.what() << std::endl;
         // Return cached value if available
-        auto found = values.find(key);
-        if (found != values.end()) {
-          return found->value.cast<VALUE>();
+        if (cached != values.end()) {
+          return cached->value.cast<VALUE>();
         }
         throw;  // Re-throw if no cached value
       }

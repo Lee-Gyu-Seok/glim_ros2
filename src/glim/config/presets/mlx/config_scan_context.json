@@ -7,13 +7,15 @@
     "pc_fov": 120.0,
     "pc_fov_offset": -60.0,
     "num_exclude_recent": 50,
-    "num_candidates_from_tree": 10,
+    "num_candidates_from_tree": 5,
     "search_ratio": 0.1,
-    "sc_dist_threshold": 0.5,
+    "sc_dist_threshold": 0.30,
     "tree_making_period": 50,
     "min_movement_threshold": 1.0,
-    "inlier_fraction_threshold": 0.7,
-    "icp_max_iterations": 5,
-    "icp_num_threads": 4
+    "inlier_fraction_threshold": 0.85,
+    "icp_max_iterations": 10,
+    "icp_num_threads": 4,
+    // Loop factor noise score (higher = weaker constraint, more robust to outliers)
+    "loop_noise_score": 1.5
   }
 }
