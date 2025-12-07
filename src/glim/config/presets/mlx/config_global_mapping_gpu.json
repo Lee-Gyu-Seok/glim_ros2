@@ -5,22 +5,22 @@
     "enable_optimization": true,
     // Use original damping scale (1e10 like original glim)
     "init_pose_damping_scale": 1e10,
-    // ENABLE between-factors with GICP (like original glim)
-    "create_between_factors": true,
-    "between_registration_type": "GICP",
-    "registration_error_factor_type": "VGICP",
-    // Use finer voxel resolution for maximum accuracy
+    // DISABLE between-factors - GICP doesn't work on this dataset
+    "create_between_factors": false,
+    "between_registration_type": "NONE",
+    "registration_error_factor_type": "VGICP_GPU",
+    // Use fine voxel resolution for accuracy
     "randomsampling_rate": 1.0,
-    "submap_voxel_resolution": 0.05,
+    "submap_voxel_resolution": 0.08,
     "submap_voxelmap_levels": 4,
     "submap_voxelmap_scaling_factor": 2.0,
-    // More aggressive implicit loop detection for better accuracy
+    // AGGRESSIVE implicit loop detection for accuracy (compensate for no between-factors)
     "max_implicit_loop_distance": 100.0,
     "min_implicit_loop_overlap": 0.1,
     // Use Gauss-Newton solver (like original glim)
     "use_isam2_dogleg": false,
-    // More frequent relinearization for accuracy
+    // Use original ISAM2 settings
     "isam2_relinearize_skip": 1,
-    "isam2_relinearize_thresh": 0.05
+    "isam2_relinearize_thresh": 0.1
   }
 }

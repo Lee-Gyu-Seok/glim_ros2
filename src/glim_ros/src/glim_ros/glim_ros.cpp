@@ -33,6 +33,7 @@
 #include <glim/util/extension_module.hpp>
 #include <glim/util/extension_module_ros2.hpp>
 #include <glim/preprocess/cloud_preprocessor.hpp>
+#include <glim/util/profiler.hpp>
 #include <glim/odometry/async_odometry_estimation.hpp>
 #include <glim/mapping/async_sub_mapping.hpp>
 #include <glim/mapping/async_global_mapping.hpp>
@@ -375,6 +376,11 @@ void GlimROS::wait(bool auto_quit) {
 
 void GlimROS::save(const std::string& path) {
   if (global_mapping) global_mapping->save(path);
+
+  // Save profiling statistics
+  Profiler::instance().save(path);
+  spdlog::info("Profiling statistics saved to: {}/profiling_stats.txt", path);
+
   for (auto& module : extension_modules) {
     module->at_exit(path);
   }

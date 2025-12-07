@@ -15,11 +15,18 @@
 #include <gtsam_points/optimizers/incremental_fixed_lag_smoother_with_fallback.hpp>
 
 #include <glim/util/config.hpp>
+#include <glim/util/profiler.hpp>
 #include <glim/common/imu_integration.hpp>
 #include <glim/common/cloud_deskewing.hpp>
 #include <glim/common/cloud_covariance_estimation.hpp>
 
 #include <glim/odometry/callbacks.hpp>
+
+// small_gicp headers for CPU-based GICP
+#include <small_gicp/ann/kdtree_omp.hpp>
+#include <small_gicp/factors/gicp_factor.hpp>
+#include <small_gicp/registration/reduction_omp.hpp>
+#include <small_gicp/registration/registration.hpp>
 
 #ifdef GTSAM_USE_TBB
 #include <tbb/task_arena.h>
@@ -139,6 +146,7 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
   // lm_params.setDiagonalDamping(true);
   gtsam_points::LevenbergMarquardtOptimizerExt optimizer(graph, values, lm_params);
 
+  GLIM_PROFILE_START("odometry/icp_optimization");
 #ifdef GTSAM_USE_TBB
   auto arena = static_cast<tbb::task_arena*>(this->tbb_task_arena.get());
   arena->execute([&] {
@@ -147,6 +155,7 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
 #ifdef GTSAM_USE_TBB
   });
 #endif
+  GLIM_PROFILE_STOP("odometry/icp_optimization");
 
   const Eigen::Isometry3d T_target_imu = Eigen::Isometry3d(values.at<gtsam::Pose3>(X(current)).matrix());
   Eigen::Isometry3d T_last_current = last_T_target_imu.inverse() * T_target_imu;

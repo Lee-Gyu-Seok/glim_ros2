@@ -131,7 +131,10 @@ gtsam::NonlinearFactorGraph OdometryEstimationGPU::create_factors(const int curr
     return gtsam::NonlinearFactorGraph();
   }
 
-  const auto create_binary_factor = [this](
+  const auto params = static_cast<OdometryEstimationGPUParams*>(this->params.get());
+
+  // GPU VGICP factor creation lambdas
+  const auto create_binary_factor_gpu = [this](
                                       gtsam::NonlinearFactorGraph& factors,
                                       gtsam::Key target_key,
                                       gtsam::Key source_key,
@@ -148,7 +151,7 @@ gtsam::NonlinearFactorGraph OdometryEstimationGPU::create_factors(const int curr
     }
   };
 
-  const auto create_unary_factor = [this](
+  const auto create_unary_factor_gpu = [this](
                                      gtsam::NonlinearFactorGraph& factors,
                                      const gtsam::Pose3& fixed_target_pose,
                                      gtsam::Key source_key,
@@ -165,8 +168,6 @@ gtsam::NonlinearFactorGraph OdometryEstimationGPU::create_factors(const int curr
     }
   };
 
-  const auto params = static_cast<OdometryEstimationGPUParams*>(this->params.get());
-
   gtsam::NonlinearFactorGraph factors;
   if (current == 0) {
     return factors;
@@ -178,7 +179,7 @@ gtsam::NonlinearFactorGraph OdometryEstimationGPU::create_factors(const int curr
       continue;
     }
 
-    create_binary_factor(factors, X(target), X(current), frames[target], frames[current]);
+    create_binary_factor_gpu(factors, X(target), X(current), frames[target], frames[current]);
   }
 
   for (const auto& keyframe : keyframes) {
@@ -187,19 +188,15 @@ gtsam::NonlinearFactorGraph OdometryEstimationGPU::create_factors(const int curr
       continue;
     }
 
-    auto stream_buffer = stream_buffer_roundrobin->get_stream_buffer();
-    const auto& stream = stream_buffer.first;
-    const auto& buffer = stream_buffer.second;
-
     double span = frames[current]->stamp - keyframe->stamp;
     if (span > params->smoother_lag - 0.1) {
       // Create unary factor
       const gtsam::Pose3 key_T_world_imu(keyframe->T_world_imu.matrix());
-      create_unary_factor(factors, key_T_world_imu, X(current), keyframe, frames[current]);
+      create_unary_factor_gpu(factors, key_T_world_imu, X(current), keyframe, frames[current]);
     } else {
       // Create binary factor
       const int target = keyframe->id;
-      create_binary_factor(factors, X(target), X(current), frames[target], frames[current]);
+      create_binary_factor_gpu(factors, X(target), X(current), frames[target], frames[current]);
     }
   }
 

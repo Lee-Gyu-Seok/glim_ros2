@@ -61,6 +61,9 @@ private:
   std::deque<EstimationFrame::ConstPtr> gravity_aligned_frames;
   ConcurrentVector<gtsam::NonlinearFactor::shared_ptr> output_global_factors_queue;
 
+  // Configurable parameters
+  double gravity_alignment_sigma;  // Noise sigma for gravity alignment factor (default: 1e-3)
+
   // visualization
   std::unique_ptr<VisualizationData> vis_data;
 

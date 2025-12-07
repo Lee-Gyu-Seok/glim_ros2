@@ -1,0 +1,10 @@
+{
+  "gravity_estimator": {
+    // Noise sigma for gravity alignment factor
+    // Lower value = stronger constraint (more rigid Z-axis alignment)
+    // Higher value = weaker constraint (more flexible, less Z-axis jitter)
+    // Default: 0.01 (was 1e-3 which was too aggressive)
+    // Recommended range: 0.005 ~ 0.05
+    "gravity_alignment_sigma": 0.01
+  }
+}

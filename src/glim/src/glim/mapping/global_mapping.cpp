@@ -1,6 +1,7 @@
 #include <glim/mapping/global_mapping.hpp>
 
 #include <map>
+#include <chrono>
 #include <unordered_set>
 #include <spdlog/spdlog.h>
 #include <boost/filesystem.hpp>
@@ -34,6 +35,7 @@
 #include <glim/util/serialization.hpp>
 #include <glim/common/imu_integration.hpp>
 #include <glim/mapping/callbacks.hpp>
+#include <glim/util/profiler.hpp>
 
 #ifdef GTSAM_USE_TBB
 #include <tbb/task_arena.h>
@@ -168,10 +170,8 @@ void GlobalMapping::insert_submap(const SubMap::Ptr& submap) {
   submap->drop_frame_points();
 
   if (current == 0) {
-    // Add both LinearDampingFactor and PriorFactor for the first submap to prevent IndeterminantLinearSystemException
+    // Use only LinearDampingFactor like original glim (no PriorFactor)
     new_factors->emplace_shared<gtsam_points::LinearDampingFactor>(X(0), 6, params.init_pose_damping_scale);
-    // PriorFactor is essential to fully constrain the first pose in the factor graph
-    new_factors->emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), current_T_world_submap, gtsam::noiseModel::Isotropic::Precision(6, params.init_pose_damping_scale));
   } else {
     new_factors->add(*create_between_factors(current));
     new_factors->add(*create_matching_cost_factors(current));
@@ -402,6 +402,8 @@ boost::shared_ptr<gtsam::NonlinearFactorGraph> GlobalMapping::create_between_fac
     return factors;
   }
 
+  // gtsam_points GICP registration
+  GLIM_PROFILE_START("global_mapping/between_gicp");
   gtsam::Values values;
   values.insert(X(0), gtsam::Pose3::Identity());
   values.insert(X(1), init_delta);
@@ -410,7 +412,7 @@ boost::shared_ptr<gtsam::NonlinearFactorGraph> GlobalMapping::create_between_fac
   graph.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(X(0), gtsam::Pose3::Identity(), gtsam::noiseModel::Isotropic::Precision(6, 1e6));
 
   auto factor = gtsam::make_shared<gtsam_points::IntegratedGICPFactor>(X(0), X(1), submaps[last]->frame, submaps[current]->frame);
-  factor->set_max_correspondence_distance(1.0);
+  factor->set_max_correspondence_distance(0.5);  // Use original value for stability
   factor->set_num_threads(2);
   graph.add(factor);
 
@@ -436,6 +438,7 @@ boost::shared_ptr<gtsam::NonlinearFactorGraph> GlobalMapping::create_between_fac
   const auto H = linearized->hessianBlockDiagonal()[X(1)] + 1e6 * gtsam::Matrix6::Identity();
 
   factors->add(gtsam::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(last), X(current), estimated_delta, gtsam::noiseModel::Gaussian::Information(H)));
+  GLIM_PROFILE_STOP("global_mapping/between_gicp");
   return factors;
 }
 
@@ -527,6 +530,7 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
   gtsam::Key indeterminant_nearby_key = 0;
   bool values_key_error = false;
   try {
+    GLIM_PROFILE_START("global_mapping/isam2_update");
 #ifdef GTSAM_USE_TBB
     auto arena = static_cast<tbb::task_arena*>(tbb_task_arena.get());
     arena->execute([&] {
@@ -535,16 +539,43 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
 #ifdef GTSAM_USE_TBB
     });
 #endif
+    GLIM_PROFILE_STOP("global_mapping/isam2_update");
   } catch (const gtsam::IndeterminantLinearSystemException& e) {
-    logger->error("an indeterminant lienar system exception was caught during global map optimization!!");
-    logger->error(e.what());
+    GLIM_PROFILE_STOP("global_mapping/isam2_update");
+    // Throttle error logging to avoid spam (log at most once every 5 seconds)
+    static auto last_indeterminant_log_time = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    static int indeterminant_error_count = 0;
+    indeterminant_error_count++;
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_indeterminant_log_time).count() >= 5) {
+      if (indeterminant_error_count > 1) {
+        logger->error("IndeterminantLinearSystemException occurred {} times (showing latest)", indeterminant_error_count);
+      }
+      logger->error("IndeterminantLinearSystemException near variable {} (Symbol: {})",
+                    e.nearbyVariable(), std::string(gtsam::Symbol(e.nearbyVariable())));
+      last_indeterminant_log_time = now;
+      indeterminant_error_count = 0;
+    }
     indeterminant_nearby_key = e.nearbyVariable();
   } catch (const gtsam::ValuesKeyDoesNotExist& e) {
-    logger->error("ValuesKeyDoesNotExist exception caught during global map optimization!!");
-    logger->error(e.what());
+    GLIM_PROFILE_STOP("global_mapping/isam2_update");
+    // Throttle error logging
+    static auto last_values_log_time = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    static int values_error_count = 0;
+    values_error_count++;
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_values_log_time).count() >= 5) {
+      if (values_error_count > 1) {
+        logger->error("ValuesKeyDoesNotExist occurred {} times (showing latest)", values_error_count);
+      }
+      logger->error("ValuesKeyDoesNotExist: key {} (Symbol: {})", e.key(), std::string(gtsam::Symbol(e.key())));
+      last_values_log_time = now;
+      values_error_count = 0;
+    }
     indeterminant_nearby_key = e.key();
     values_key_error = true;
   } catch (const std::exception& e) {
+    GLIM_PROFILE_STOP("global_mapping/isam2_update");
     logger->error("an exception was caught during global map optimization!!");
     logger->error(e.what());
   }
@@ -568,36 +599,8 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
     gtsam::Values values = isam2->getLinearizationPoint();
     gtsam::NonlinearFactorGraph factors = isam2->getFactorsUnsafe();
 
-    // For ValuesKeyDoesNotExist error, we need to add the missing key to values
-    const gtsam::Symbol problem_symbol(indeterminant_nearby_key);
-    if (values_key_error && problem_symbol.chr() == 'x' && !values.exists(indeterminant_nearby_key)) {
-      const int submap_idx = problem_symbol.index();
-      if (submap_idx < static_cast<int>(submaps.size()) && submaps[submap_idx]) {
-        // Use the submap's current T_world_origin as the value
-        gtsam::Pose3 pose_from_submap(submaps[submap_idx]->T_world_origin.matrix());
-        values.insert(indeterminant_nearby_key, pose_from_submap);
-        logger->warn("added missing value for {} from submap T_world_origin", std::string(problem_symbol));
-      } else if (new_values.exists(indeterminant_nearby_key)) {
-        // Try to get from new_values
-        values.insert(indeterminant_nearby_key, new_values.at<gtsam::Pose3>(indeterminant_nearby_key));
-        logger->warn("added missing value for {} from new_values", std::string(problem_symbol));
-      } else {
-        // Fallback: use identity pose
-        values.insert(indeterminant_nearby_key, gtsam::Pose3::Identity());
-        logger->warn("added missing value for {} with identity pose (fallback)", std::string(problem_symbol));
-      }
-    }
-
-    // Add stronger damping factor
-    factors.emplace_shared<gtsam_points::LinearDampingFactor>(indeterminant_nearby_key, 6, 1e6);
-
-    // Add PriorFactor for the problematic node to strongly constrain it
-    // This is essential for both x0 and any other node that becomes underconstrained
-    if (problem_symbol.chr() == 'x' && values.exists(indeterminant_nearby_key)) {
-      gtsam::Pose3 current_pose = values.at<gtsam::Pose3>(indeterminant_nearby_key);
-      factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(indeterminant_nearby_key, current_pose, gtsam::noiseModel::Isotropic::Precision(6, 1e6));
-      logger->warn("added PriorFactor for {} to prevent corruption", std::string(problem_symbol));
-    }
+    // Use original glim damping factor (1e3, not 1e6)
+    factors.emplace_shared<gtsam_points::LinearDampingFactor>(indeterminant_nearby_key, 6, 1e3);
 
     gtsam::ISAM2Params isam2_params;
     if (params.use_isam2_dogleg) {

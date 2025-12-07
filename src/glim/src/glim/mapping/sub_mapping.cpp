@@ -25,6 +25,7 @@
 #include <glim/common/cloud_deskewing.hpp>
 #include <glim/common/cloud_covariance_estimation.hpp>
 #include <glim/mapping/callbacks.hpp>
+#include <glim/util/profiler.hpp>
 
 #ifdef GTSAM_USE_TBB
 #include <tbb/task_arena.h>
@@ -427,6 +428,7 @@ SubMap::Ptr SubMapping::create_submap(bool force_create) const {
   gtsam_points::LevenbergMarquardtOptimizerExt optimizer(*graph, *values, lm_params);
   if (params.enable_optimization) {
     try {
+      GLIM_PROFILE_START("sub_mapping/optimization");
 #ifdef GTSAM_USE_TBB
       auto arena = static_cast<tbb::task_arena*>(this->tbb_task_arena.get());
       arena->execute([&] {
@@ -437,7 +439,9 @@ SubMap::Ptr SubMapping::create_submap(bool force_create) const {
 #ifdef GTSAM_USE_TBB
       });
 #endif
+      GLIM_PROFILE_STOP("sub_mapping/optimization");
     } catch (std::exception& e) {
+      GLIM_PROFILE_STOP("sub_mapping/optimization");
       logger->error("an exception was caught during sub map optimization");
       logger->error(e.what());
     }
@@ -470,6 +474,7 @@ SubMap::Ptr SubMapping::create_submap(bool force_create) const {
   }
 
   logger->debug("merge frames");
+  GLIM_PROFILE_START("sub_mapping/merge_frames");
   std::vector<gtsam_points::PointCloud::ConstPtr> keyframes_to_merge(keyframes.size());
   std::vector<Eigen::Isometry3d> poses_to_merge(keyframes.size());
   for (int i = 0; i < keyframes.size(); i++) {
@@ -487,6 +492,7 @@ SubMap::Ptr SubMapping::create_submap(bool force_create) const {
   if (submap->frame == nullptr) {
     submap->frame = gtsam_points::merge_frames_auto(poses_to_merge, keyframes_to_merge, params.submap_downsample_resolution);
   }
+  GLIM_PROFILE_STOP("sub_mapping/merge_frames");
   logger->debug("|merged_submap|={}", submap->frame->size());
 
   if (params.submap_target_num_points > 0 && submap->frame->size() > params.submap_target_num_points) {

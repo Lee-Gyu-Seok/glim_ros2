@@ -8,6 +8,7 @@
 #include <gtsam_points/optimizers/levenberg_marquardt_ext.hpp>
 #include <gtsam_points/optimizers/incremental_fixed_lag_smoother_with_fallback.hpp>
 
+#include <glim/util/config.hpp>
 #include <glim/util/logging.hpp>
 #include <glim/util/convert_to_string.hpp>
 #include <glim/odometry/callbacks.hpp>
@@ -34,6 +35,11 @@ struct VisualizationData {};
 
 GravityEstimatorModule::GravityEstimatorModule() : logger(create_module_logger("grav")) {
   logger->info("starting gravity estimator module");
+
+  // Load configurable parameters
+  glim::Config config(glim::GlobalConfig::get_config_path("config_gravity_estimator"));
+  gravity_alignment_sigma = config.param<double>("gravity_estimator", "gravity_alignment_sigma", 0.01);  // Default: 0.01 (was 1e-3)
+  logger->info("gravity_alignment_sigma: {}", gravity_alignment_sigma);
 
   gtsam::ISAM2Params isam2_params;
   isam2_params.relinearizeSkip = 1;
@@ -203,7 +209,7 @@ void GravityEstimatorModule::task() {
           gtsam::noiseModel::Isotropic::Sigma(6, 1e-3));
         output_factors_queue.push_back(bias_factor);
 
-        auto noise_model = gtsam::noiseModel::Isotropic::Sigma(3, 1e-3);
+        auto noise_model = gtsam::noiseModel::Isotropic::Sigma(3, gravity_alignment_sigma);
         const Eigen::Vector3d upward = frame_->T_world_imu.linear().col(2).normalized();
 
         // auto upward_factor = create_gravity_alignment_factor(X(frame->id), upward, noise_model);
@@ -251,8 +257,19 @@ void GravityEstimatorModule::on_insert_submap(const SubMap::ConstPtr& submap) {
   }
 
   logger->debug("submap={} frame={}", submap->id, (*found)->id);
+
+  // Skip early submaps to avoid conflict with init_pose_damping_scale in global_mapping
+  // Adding GravityAlignmentFactor to early submaps can cause IndeterminantLinearSystemException
+  // due to insufficient constraints in the factor graph during initialization phase
+  constexpr int min_submap_id_for_gravity = 10;
+  if (submap->id < min_submap_id_for_gravity) {
+    logger->debug("skip gravity alignment factor for x{} (early submap, waiting until x{})", submap->id, min_submap_id_for_gravity);
+    gravity_aligned_frames.erase(gravity_aligned_frames.begin(), found);
+    return;
+  }
+
   const Eigen::Vector3d upward = (*found)->T_world_imu.linear().col(2).normalized();
-  const auto noise_model = gtsam::noiseModel::Isotropic::Sigma(3, 1e-3);
+  const auto noise_model = gtsam::noiseModel::Isotropic::Sigma(3, gravity_alignment_sigma);
   // auto upward_factor = create_gravity_alignment_factor(X(submap->id), upward, noise_model);
   auto upward_factor = gtsam::make_shared<GravityAlignmentFactor>(X(submap->id), upward, noise_model);
   output_global_factors_queue.push_back(upward_factor);
