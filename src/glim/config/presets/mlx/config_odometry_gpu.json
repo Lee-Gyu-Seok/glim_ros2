@@ -13,6 +13,6 @@
     "vgicp_voxelmap_levels": 2,
     "vgicp_voxelmap_scaling_factor": 2.0,
     "save_imu_rate_trajectory": true,
-    "num_threads": 4
+    "num_threads": 8
   }
 }

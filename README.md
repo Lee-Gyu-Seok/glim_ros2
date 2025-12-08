@@ -208,3 +208,194 @@ timestamp x y z qx qy qz qw
 | `glim_ext` | GLIM 확장 모듈 (ScanContext 루프 클로저 등) |
 | `gtsam_points` | GTSAM 기반 포인트 클라우드 등록 팩터 |
 | `iridescence` | OpenGL 기반 3D 시각화 라이브러리 |
+
+---
+
+## System Workflow with MLX Preset
+
+본 시스템은 MLX LiDAR와 카메라를 사용한 LiDAR-IMU SLAM 및 RGB Colorization을 위해 최적화되어 있습니다.
+
+### 설정 파일 구조
+
+모든 설정 파일은 `src/glim/config/presets/mlx/` 폴더에 위치합니다:
+
+```
+config/presets/mlx/
+├── config_ros.json              # ROS 토픽 설정, 확장 모듈 활성화
+├── config_sensors.json          # 센서 파라미터 (LiDAR-IMU/Camera 캘리브레이션)
+├── config_preprocess.json       # 포인트 클라우드 전처리 (다운샘플링, 범위 필터)
+├── config_odometry_cpu.json     # CPU 기반 Odometry (GICP/VGICP/SmallGICP)
+├── config_odometry_gpu.json     # GPU 기반 Odometry (VGICP-GPU)
+├── config_sub_mapping_cpu.json  # 서브맵 생성 (CPU)
+├── config_sub_mapping_gpu.json  # 서브맵 생성 (GPU)
+├── config_global_mapping_cpu.json  # 전역 최적화 (CPU)
+├── config_global_mapping_gpu.json  # 전역 최적화 (GPU)
+├── config_scan_context.json     # 루프 클로저 검출 설정
+├── config_gravity_estimator.json   # 중력 추정 모듈 설정
+└── config_viewer.json           # 시각화 설정
+```
+
+### 데이터 흐름 파이프라인
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   LiDAR     │────▶│  Preprocessing   │────▶│   Odometry      │
+│   Points    │     │  (Downsampling)  │     │  (GICP/VGICP)   │
+└─────────────┘     └──────────────────┘     └────────┬────────┘
+                                                      │
+┌─────────────┐                                       │
+│    IMU      │───────────────────────────────────────┤
+│   Data      │    (Integration & Deskewing)          │
+└─────────────┘                                       ▼
+                                             ┌─────────────────┐
+┌─────────────┐     ┌──────────────────┐     │   Sub-Mapping   │
+│   Camera    │────▶│  RGB Colorizer   │◀────│   (Voxelmap)    │
+│   Image     │     │  (FOV Filtering) │     └────────┬────────┘
+└─────────────┘     └────────┬─────────┘              │
+                             │                        ▼
+                             │              ┌─────────────────┐
+                             │              │  Global Mapping │
+                             │              │  (Optimization) │
+                             │              └────────┬────────┘
+                             │                       │
+                             ▼                       ▼
+                    ┌─────────────────────────────────────────┐
+                    │           Output Files                  │
+                    │  - traj_lidar.txt (Optimized trajectory)│
+                    │  - Submap point clouds                  │
+                    │  - global_map_rgb_fov.pcd (RGB map)     │
+                    │  - profiling_stats.txt                  │
+                    └─────────────────────────────────────────┘
+```
+
+### 확장 모듈 (Extension Modules)
+
+`config_ros.json`에서 확장 모듈을 활성화/비활성화할 수 있습니다:
+
+#### 1. ScanContext Loop Detector
+```json
+"extension_modules": ["libscan_context_loop_detector.so"]
+```
+- 역할: ScanContext 기반 루프 클로저 검출
+- 설정: `config_scan_context.json`
+- 루프 폐합 시 drift 보정에 필수적
+
+#### 2. RGB Colorizer
+```json
+"rgb_colorizer_enabled": true,
+"rgb_image_topic": "/camera/image/compressed"
+```
+- 역할: 카메라 이미지를 이용한 포인트 클라우드 컬러화
+- 설정: `config_sensors.json`의 카메라 파라미터
+- 기능:
+  - 카메라 FOV 내 포인트만 RGB 색상 적용
+  - Motion compensation (LiDAR-Camera 시간차 보정)
+  - Z-buffer 기반 가려짐 처리
+  - 종료 시 `global_map_rgb_fov.pcd` 자동 저장
+
+#### 3. Gravity Estimator
+```json
+"gravity_estimator_enabled": true
+```
+- 역할: IMU 데이터 기반 중력 방향 추정
+- 설정: `config_gravity_estimator.json`
+- 초기화 시 수평 정렬에 사용
+
+### Odometry Registration 타입
+
+`config_odometry_cpu.json` 또는 `config_odometry_gpu.json`에서 선택:
+
+| 타입 | 설명 | 사용 환경 |
+|------|------|----------|
+| `GICP` | iVox 기반 GICP | CPU |
+| `VGICP` | Voxelized GICP | CPU/GPU |
+| `SmallGICP` | 경량 GICP (small_gicp 라이브러리) | CPU |
+
+GPU 버전 (`config_odometry_gpu.json`)은 VGICP-GPU만 지원합니다.
+
+### CPU vs GPU 설정 전환
+
+`config_ros.json`에서 CPU/GPU 모드를 선택합니다:
+
+```json
+// GPU 모드
+"odometry_so_name": "libodometry_estimation_gpu.so",
+"sub_mapping_so_name": "libsub_mapping_gpu.so",
+
+// CPU 모드
+"odometry_so_name": "libodometry_estimation_cpu.so",
+"sub_mapping_so_name": "libsub_mapping_cpu.so"
+```
+
+### 카메라 캘리브레이션 설정
+
+`config_sensors.json`에서 카메라 파라미터를 설정합니다:
+
+```json
+{
+  "sensors": {
+    "global_shutter_camera": true,
+    "image_size": [1920, 1200],
+    "intrinsics": [fx, fy, cx, cy],
+    "distortion_model": "plumb_bob",
+    "distortion_coeffs": [k1, k2, p1, p2, k3],
+    "T_lidar_camera": [tx, ty, tz, qx, qy, qz, qw]  // TUM format
+  }
+}
+```
+
+### 프로파일링 통계
+
+`profiling_stats.txt`에 저장되는 주요 측정 항목:
+
+| 항목 | 설명 |
+|------|------|
+| `odometry/total` | 전체 Odometry 처리 시간 |
+| `odometry/icp_optimization` | ICP 최적화 시간 (CPU GICP/VGICP) |
+| `odometry/small_gicp_optimization` | SmallGICP 최적화 시간 |
+| `odometry_cpu/create_factors` | CPU Factor 생성 시간 |
+| `odometry_gpu/create_factors` | GPU Factor 생성 시간 |
+
+### 원점 회귀 오차 계산 (Loop Closure 평가)
+
+`traj_lidar.txt`를 사용하여 시작-종료 위치/방향 오차를 계산할 수 있습니다:
+
+```python
+import numpy as np
+
+# traj_lidar.txt 로드 (TUM format: timestamp x y z qx qy qz qw)
+traj = np.loadtxt("traj_lidar.txt")
+
+# 시작/종료 위치
+start_pos = traj[0, 1:4]
+end_pos = traj[-1, 1:4]
+position_error = np.linalg.norm(end_pos - start_pos)
+
+# 시작/종료 쿼터니언
+start_quat = traj[0, 4:8]  # qx, qy, qz, qw
+end_quat = traj[-1, 4:8]
+
+# 방향 오차 계산 (quaternion difference)
+from scipy.spatial.transform import Rotation
+r_start = Rotation.from_quat(start_quat)
+r_end = Rotation.from_quat(end_quat)
+r_diff = r_start.inv() * r_end
+angle_error_rad = r_diff.magnitude()
+angle_error_deg = np.degrees(angle_error_rad)
+
+print(f"Position error: {position_error*100:.2f} cm")
+print(f"Orientation error: {angle_error_deg:.2f} degrees")
+```
+
+### 결과 파일 요약
+
+프로그램 종료 시 `glim_ros/Log/map_YYYYMMDD_HHMMSS/` 폴더에 저장:
+
+| 파일/폴더 | 설명 |
+|-----------|------|
+| `traj_lidar.txt` | 최적화된 LiDAR 궤적 (TUM format) |
+| `odom_lidar.txt` | 루프 클로저 미적용 Odometry 궤적 |
+| `profiling_stats.txt` | 연산 시간 통계 |
+| `global_map_rgb_fov.pcd` | RGB 색상이 입혀진 FOV 포인트 맵 |
+| `XXXXXX/` | 각 서브맵 데이터 (point clouds, poses) |
+| `config/` | 사용된 설정 파일 백업 |

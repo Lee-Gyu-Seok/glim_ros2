@@ -40,12 +40,12 @@
     "autoconf_prefer_frame_time": false,
     "perpoint_relative_time": true,
     "perpoint_time_scale": 1e-9,
-    // Camera config (not used for this setup)
+    // Camera config for RGB colorization
     "global_shutter_camera": true,
-    "image_size": [752, 480],
-    "T_lidar_camera": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-    "intrinsics": [500.0, 500.0, 376.0, 240.0],
+    "image_size": [1920, 1200],
+    "T_lidar_camera": [0.11208, -0.03075, -0.00991, 0.50809, -0.50212, 0.49961, 0.49001],
+    "intrinsics": [1178.14959, 1182.06921, 970.00208, 601.90079],
     "distortion_model": "plumb_bob",
-    "distortion_coeffs": [0.0, 0.0, 0.0, 0.0, 0.0]
+    "distortion_coeffs": [-0.21612, 0.05788, -0.00017, 0.00053, 0.0]
   }
 }

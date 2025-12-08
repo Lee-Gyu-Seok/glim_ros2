@@ -151,6 +151,59 @@ void RGBColorizerROS::set_callbacks() {
 }
 
 bool RGBColorizerROS::load_calibration(const std::string& filepath) {
+  // First, try to load from config_sensors.json (integrated calibration)
+  try {
+    const Config sensors_config(GlobalConfig::get_config_path("config_sensors"));
+
+    // Check if camera parameters are available in config_sensors.json
+    auto intrinsics = sensors_config.param<std::vector<double>>("sensors", "intrinsics", std::vector<double>());
+    auto T_lidar_camera_vec = sensors_config.param<std::vector<double>>("sensors", "T_lidar_camera", std::vector<double>());
+    auto dist_vec = sensors_config.param<std::vector<double>>("sensors", "distortion_coeffs", std::vector<double>());
+
+    if (intrinsics.size() == 4 && T_lidar_camera_vec.size() == 7 && dist_vec.size() >= 5) {
+      // Use config_sensors.json parameters
+      double fx = intrinsics[0];
+      double fy = intrinsics[1];
+      double cx = intrinsics[2];
+      double cy = intrinsics[3];
+      camera_matrix = (cv::Mat_<double>(3, 3) << fx, 0, cx, 0, fy, cy, 0, 0, 1);
+
+      // Distortion coefficients: [k1, k2, p1, p2, k3] (plumb_bob format)
+      double k1 = dist_vec[0];
+      double k2 = dist_vec[1];
+      double p1 = dist_vec[2];
+      double p2 = dist_vec[3];
+      double k3 = dist_vec.size() > 4 ? dist_vec[4] : 0.0;
+      dist_coeffs = (cv::Mat_<double>(5, 1) << k1, k2, p1, p2, k3);
+
+      // T_lidar_camera in config_sensors.json is actually T_camera_lidar (Camera <- LiDAR)
+      // Same format as the external calibration file: [tx, ty, tz, qx, qy, qz, qw]
+      double tx = T_lidar_camera_vec[0];
+      double ty = T_lidar_camera_vec[1];
+      double tz = T_lidar_camera_vec[2];
+      double qx = T_lidar_camera_vec[3];
+      double qy = T_lidar_camera_vec[4];
+      double qz = T_lidar_camera_vec[5];
+      double qw = T_lidar_camera_vec[6];
+
+      Eigen::Quaterniond q(qw, qx, qy, qz);
+      T_camera_lidar = Eigen::Isometry3d::Identity();
+      T_camera_lidar.linear() = q.toRotationMatrix();
+      T_camera_lidar.translation() = Eigen::Vector3d(tx, ty, tz);
+
+      logger->info("Loaded calibration from config_sensors.json: fx={:.1f}, fy={:.1f}, cx={:.1f}, cy={:.1f}", fx, fy, cx, cy);
+      return true;
+    }
+  } catch (const std::exception& e) {
+    logger->debug("config_sensors.json calibration not available: {}", e.what());
+  }
+
+  // Fallback: Load from external calibration file
+  if (filepath.empty()) {
+    logger->error("No calibration source available (config_sensors.json or external file)");
+    return false;
+  }
+
   try {
     std::ifstream ifs(filepath);
     if (!ifs.is_open()) {
@@ -215,7 +268,7 @@ bool RGBColorizerROS::load_calibration(const std::string& filepath) {
     T_camera_lidar.linear() = R;
     T_camera_lidar.translation() = Eigen::Vector3d(tx, ty, tz);
 
-    logger->info("Loaded calibration: fx={:.1f}, fy={:.1f}, cx={:.1f}, cy={:.1f}", fx, fy, cx, cy);
+    logger->info("Loaded calibration from external file: fx={:.1f}, fy={:.1f}, cx={:.1f}, cy={:.1f}", fx, fy, cx, cy);
     return true;
   } catch (const std::exception& e) {
     logger->error("Failed to parse calibration file: {}", e.what());

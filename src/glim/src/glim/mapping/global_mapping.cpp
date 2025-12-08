@@ -726,6 +726,11 @@ void GlobalMapping::save(const std::string& path) {
 
   logger->info("saving config");
   GlobalConfig::instance()->dump(path + "/config");
+
+  // Save profiling statistics
+  logger->info("saving profiling stats");
+  Profiler::instance().save(path);
+  logger->info("saved");
 }
 
 std::vector<Eigen::Vector4d> GlobalMapping::export_points() {

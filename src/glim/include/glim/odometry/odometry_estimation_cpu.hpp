@@ -11,6 +11,18 @@ class IncrementalVoxelMap;
 using iVox = IncrementalVoxelMap<FlatContainer>;
 }  // namespace gtsam_points
 
+namespace small_gicp {
+struct PointCloud;
+struct AxisAlignedProjection;
+template <typename PointCloud, typename Projection>
+struct KdTree;
+template <bool HasNormals, bool HasCovs>
+struct FlatContainer;
+using FlatContainerCov = FlatContainer<false, true>;
+template <typename VoxelContents>
+struct IncrementalVoxelMap;
+}  // namespace small_gicp
+
 namespace glim {
 
 /**
@@ -25,7 +37,7 @@ public:
 
 public:
   // Registration params
-  std::string registration_type;    ///< Registration type (GICP or VGICP)
+  std::string registration_type;    ///< Registration type (GICP, VGICP, or SmallGICP)
   int max_iterations;               ///< Maximum number of iterations
   int lru_thresh;                   ///< LRU cache threshold
   double target_downsampling_rate;  ///< Downsampling rate for points to be inserted into the target
@@ -36,6 +48,12 @@ public:
   double vgicp_resolution;               ///< Voxelmap resolution (for VGICP)
   int vgicp_voxelmap_levels;             ///< Multi-resolution voxelmap levesl (for VGICP)
   double vgicp_voxelmap_scaling_factor;  ///< Multi-resolution voxelmap scaling factor (for VGICP)
+
+  // Small GICP params
+  double small_gicp_max_correspondence_distance;  ///< Max correspondence distance for SmallGICP
+  double small_gicp_rotation_eps;                 ///< Rotation tolerance for convergence [rad]
+  double small_gicp_translation_eps;              ///< Translation tolerance for convergence
+  double small_gicp_voxel_resolution;             ///< Voxel resolution for SmallGICP IncrementalVoxelMap
 };
 
 /**
@@ -62,6 +80,9 @@ private:
   std::vector<std::shared_ptr<gtsam_points::GaussianVoxelMapCPU>> target_voxelmaps;  ///< VGICP target voxelmap
   std::shared_ptr<gtsam_points::iVox> target_ivox;                                   ///< GICP target iVox
   EstimationFrame::ConstPtr target_ivox_frame;                                       ///< Target points (just for visualization)
+
+  // Small GICP target model (using IncrementalVoxelMap with LRU-based memory management)
+  std::shared_ptr<small_gicp::IncrementalVoxelMap<small_gicp::FlatContainerCov>> target_small_gicp_voxelmap;  ///< SmallGICP target voxelmap with LRU
 };
 
 }  // namespace glim
