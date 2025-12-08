@@ -5,7 +5,7 @@
     "enable_local_mapping": true,
     "enable_global_mapping": true,
     // Points config
-    "keep_raw_points": false,
+    "keep_raw_points": false, // 사용 X
     // IMU config
     "imu_time_offset": 0.0,
     "points_time_offset": 0.0,
@@ -31,11 +31,10 @@
     "imu_topic": "/spadi/imu",
     "points_topic": "/spadi/pointcloud",
     "image_topic": "",
-    // RGB colorizer settings
+    // RGB colorizer settings (calibration loaded from config_sensors.json)
     "rgb_colorizer_enabled": true,
     "rgb_image_topic": "/spadi/rgb_image/image_raw/compressed",
-    "rgb_calibration_file": "/home/soslab/Documents/bags/Pangyo_indoor_parking_lot_slam_2025_11_19-19_31_37/calibration_params.json",
-    "rgb_sync_tolerance": 2.0,
+    "rgb_sync_tolerance": 0.05,
     "rgb_max_buffer_size": 30,
     // Z-buffer occlusion handling (like merge_image_pointcloud)
     "rgb_enable_z_buffer": true,           // Enable Z-buffer based occlusion handling

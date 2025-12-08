@@ -29,6 +29,7 @@ namespace glim {
 
 class TrajectoryManager;
 struct ColorizedPointCloud;
+struct ColorizedMap;
 
 /**
  * @brief Rviz-based viewer
@@ -44,13 +45,18 @@ public:
   ~RvizViewer();
 
   virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override;
+  virtual void at_exit(const std::string& dump_path) override;
 
 private:
   void set_callbacks();
   void odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, bool corrected);
   void publish_colored_points(const ColorizedPointCloud& colorized);
+  void publish_non_colorized_points(const EstimationFrame::ConstPtr& new_frame);
+  void publish_rgb_map();
   void globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& submaps);
+  void on_rgb_map_updated(const ColorizedMap& map);
   void invoke(const std::function<void()>& task);
+  void save_map_pcd(const std::string& dump_path);
 
   void spin_once();
 
@@ -97,9 +103,22 @@ private:
   std::unique_ptr<TrajectoryManager> trajectory;
 
   std::vector<gtsam_points::PointCloud::ConstPtr> submaps;
+  std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>> submap_poses;
 
   std::mutex invoke_queue_mutex;
   std::vector<std::function<void()>> invoke_queue;
+
+  // RGB colorizer integration
+  bool rgb_colorizer_enabled;  // Whether RGB colorizer is active
+
+  // Accumulated RGB map (world frame) - updated via callback from RGBColorizer
+  std::mutex rgb_map_mutex;
+  std::vector<Eigen::Vector4d> accumulated_rgb_points;
+  std::vector<uint32_t> accumulated_rgb_colors;
+  bool rgb_map_updated;
+
+  // Map saving
+  std::string map_save_path;
 
   // Logging
   std::shared_ptr<spdlog::logger> logger;

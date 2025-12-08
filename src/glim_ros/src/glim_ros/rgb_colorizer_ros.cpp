@@ -1,7 +1,5 @@
 #include <glim_ros/rgb_colorizer_ros.hpp>
 
-#include <fstream>
-#include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
@@ -59,8 +57,9 @@ inline cv::Vec3b bilinear_sample(const cv::Mat& image, float uf, float vf) {
   return result;
 }
 
-// Define the static callback slot
+// Define the static callback slots
 CallbackSlot<void(const ColorizedPointCloud&)> RGBColorizerCallbacks::on_frame_colorized;
+CallbackSlot<void(const ColorizedMap&)> RGBColorizerCallbacks::on_map_updated;
 
 RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), kill_switch(false) {
   logger->info("starting RGB colorizer ROS module");
@@ -89,11 +88,10 @@ RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), 
   logger->info("Motion compensation: {}", enable_motion_compensation ? "enabled" : "disabled");
 
   if (enabled) {
-    std::string calib_file = config.param<std::string>("glim_ros", "rgb_calibration_file", "");
-    if (!calib_file.empty() && load_calibration(calib_file)) {
-      logger->info("RGB colorizer enabled with calibration: {}", calib_file);
+    if (load_calibration()) {
+      logger->info("RGB colorizer enabled with calibration from config_sensors.json");
     } else {
-      logger->warn("RGB colorizer: Failed to load calibration file, disabling");
+      logger->warn("RGB colorizer: Failed to load calibration from config_sensors.json, disabling");
       enabled = false;
     }
   } else {
@@ -150,8 +148,8 @@ void RGBColorizerROS::set_callbacks() {
   });
 }
 
-bool RGBColorizerROS::load_calibration(const std::string& filepath) {
-  // First, try to load from config_sensors.json (integrated calibration)
+bool RGBColorizerROS::load_calibration() {
+  // Load calibration from config_sensors.json
   try {
     const Config sensors_config(GlobalConfig::get_config_path("config_sensors"));
 
@@ -160,118 +158,57 @@ bool RGBColorizerROS::load_calibration(const std::string& filepath) {
     auto T_lidar_camera_vec = sensors_config.param<std::vector<double>>("sensors", "T_lidar_camera", std::vector<double>());
     auto dist_vec = sensors_config.param<std::vector<double>>("sensors", "distortion_coeffs", std::vector<double>());
 
-    if (intrinsics.size() == 4 && T_lidar_camera_vec.size() == 7 && dist_vec.size() >= 5) {
-      // Use config_sensors.json parameters
-      double fx = intrinsics[0];
-      double fy = intrinsics[1];
-      double cx = intrinsics[2];
-      double cy = intrinsics[3];
-      camera_matrix = (cv::Mat_<double>(3, 3) << fx, 0, cx, 0, fy, cy, 0, 0, 1);
-
-      // Distortion coefficients: [k1, k2, p1, p2, k3] (plumb_bob format)
-      double k1 = dist_vec[0];
-      double k2 = dist_vec[1];
-      double p1 = dist_vec[2];
-      double p2 = dist_vec[3];
-      double k3 = dist_vec.size() > 4 ? dist_vec[4] : 0.0;
-      dist_coeffs = (cv::Mat_<double>(5, 1) << k1, k2, p1, p2, k3);
-
-      // T_lidar_camera in config_sensors.json is actually T_camera_lidar (Camera <- LiDAR)
-      // Same format as the external calibration file: [tx, ty, tz, qx, qy, qz, qw]
-      double tx = T_lidar_camera_vec[0];
-      double ty = T_lidar_camera_vec[1];
-      double tz = T_lidar_camera_vec[2];
-      double qx = T_lidar_camera_vec[3];
-      double qy = T_lidar_camera_vec[4];
-      double qz = T_lidar_camera_vec[5];
-      double qw = T_lidar_camera_vec[6];
-
-      Eigen::Quaterniond q(qw, qx, qy, qz);
-      T_camera_lidar = Eigen::Isometry3d::Identity();
-      T_camera_lidar.linear() = q.toRotationMatrix();
-      T_camera_lidar.translation() = Eigen::Vector3d(tx, ty, tz);
-
-      logger->info("Loaded calibration from config_sensors.json: fx={:.1f}, fy={:.1f}, cx={:.1f}, cy={:.1f}", fx, fy, cx, cy);
-      return true;
+    if (intrinsics.size() != 4) {
+      logger->error("Invalid intrinsics in config_sensors.json (expected 4 values [fx, fy, cx, cy], got {})", intrinsics.size());
+      return false;
     }
-  } catch (const std::exception& e) {
-    logger->debug("config_sensors.json calibration not available: {}", e.what());
-  }
-
-  // Fallback: Load from external calibration file
-  if (filepath.empty()) {
-    logger->error("No calibration source available (config_sensors.json or external file)");
-    return false;
-  }
-
-  try {
-    std::ifstream ifs(filepath);
-    if (!ifs.is_open()) {
-      logger->error("Cannot open calibration file: {}", filepath);
+    if (T_lidar_camera_vec.size() != 7) {
+      logger->error("Invalid T_lidar_camera in config_sensors.json (expected 7 values [tx, ty, tz, qx, qy, qz, qw], got {})", T_lidar_camera_vec.size());
+      return false;
+    }
+    if (dist_vec.size() < 5) {
+      logger->error("Invalid distortion_coeffs in config_sensors.json (expected at least 5 values, got {})", dist_vec.size());
       return false;
     }
 
-    // Read file content and extract first JSON object (LiDAR-Camera calibration)
-    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-
-    // Find the first { and its matching }
-    size_t start = content.find('{');
-    if (start == std::string::npos) {
-      logger->error("No JSON object found in calibration file");
-      return false;
-    }
-
-    int brace_count = 0;
-    size_t end = start;
-    for (size_t i = start; i < content.size(); i++) {
-      if (content[i] == '{') brace_count++;
-      else if (content[i] == '}') brace_count--;
-      if (brace_count == 0) {
-        end = i + 1;
-        break;
-      }
-    }
-
-    std::string json_str = content.substr(start, end - start);
-    nlohmann::json j = nlohmann::json::parse(json_str);
-
-    // Camera matrix
-    double fx = j["camera_matrix"]["fx"];
-    double fy = j["camera_matrix"]["fy"];
-    double cx = j["camera_matrix"]["cx"];
-    double cy = j["camera_matrix"]["cy"];
+    // Camera intrinsics: [fx, fy, cx, cy]
+    double fx = intrinsics[0];
+    double fy = intrinsics[1];
+    double cx = intrinsics[2];
+    double cy = intrinsics[3];
     camera_matrix = (cv::Mat_<double>(3, 3) << fx, 0, cx, 0, fy, cy, 0, 0, 1);
 
-    // Distortion coefficients
-    double k1 = j["dist_coeffs"]["k1"];
-    double k2 = j["dist_coeffs"]["k2"];
-    double p1 = j["dist_coeffs"]["p1"];
-    double p2 = j["dist_coeffs"]["p2"];
-    double k3 = j["dist_coeffs"]["k3"];
+    // Distortion coefficients: [k1, k2, p1, p2, k3] (plumb_bob format)
+    double k1 = dist_vec[0];
+    double k2 = dist_vec[1];
+    double p1 = dist_vec[2];
+    double p2 = dist_vec[3];
+    double k3 = dist_vec.size() > 4 ? dist_vec[4] : 0.0;
     dist_coeffs = (cv::Mat_<double>(5, 1) << k1, k2, p1, p2, k3);
 
-    // Rotation (quaternion to rotation matrix)
-    double qx = j["quaternions"]["x"];
-    double qy = j["quaternions"]["y"];
-    double qz = j["quaternions"]["z"];
-    double qw = j["quaternions"]["w"];
+    // T_lidar_camera: LiDAR -> Camera transformation
+    // Format: [tx, ty, tz, qx, qy, qz, qw] (TUM format)
+    double tx = T_lidar_camera_vec[0];
+    double ty = T_lidar_camera_vec[1];
+    double tz = T_lidar_camera_vec[2];
+    double qx = T_lidar_camera_vec[3];
+    double qy = T_lidar_camera_vec[4];
+    double qz = T_lidar_camera_vec[5];
+    double qw = T_lidar_camera_vec[6];
+
     Eigen::Quaterniond q(qw, qx, qy, qz);
-    Eigen::Matrix3d R = q.toRotationMatrix();
-
-    // Translation
-    double tx = j["tvecs"]["tx"];
-    double ty = j["tvecs"]["ty"];
-    double tz = j["tvecs"]["tz"];
-
-    // Store T_camera_lidar
     T_camera_lidar = Eigen::Isometry3d::Identity();
-    T_camera_lidar.linear() = R;
+    T_camera_lidar.linear() = q.toRotationMatrix();
     T_camera_lidar.translation() = Eigen::Vector3d(tx, ty, tz);
 
-    logger->info("Loaded calibration from external file: fx={:.1f}, fy={:.1f}, cx={:.1f}, cy={:.1f}", fx, fy, cx, cy);
+    logger->info("Loaded calibration from config_sensors.json:");
+    logger->info("  intrinsics: fx={:.2f}, fy={:.2f}, cx={:.2f}, cy={:.2f}", fx, fy, cx, cy);
+    logger->info("  distortion: k1={:.5f}, k2={:.5f}, p1={:.5f}, p2={:.5f}, k3={:.5f}", k1, k2, p1, p2, k3);
+    logger->info("  T_lidar_camera: t=[{:.4f}, {:.4f}, {:.4f}], q=[{:.4f}, {:.4f}, {:.4f}, {:.4f}]",
+                 tx, ty, tz, qx, qy, qz, qw);
     return true;
   } catch (const std::exception& e) {
-    logger->error("Failed to parse calibration file: {}", e.what());
+    logger->error("Failed to load calibration from config_sensors.json: {}", e.what());
     return false;
   }
 }
@@ -424,6 +361,7 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
   task.T_camera_points = T_camera_lidar;
   task.T_lidar_imu = frame->T_lidar_imu;  // LiDAR-IMU transformation
   task.imu_rate_trajectory = frame->imu_rate_trajectory;  // IMU-rate trajectory for motion compensation
+  task.T_world_sensor = frame->T_world_sensor();  // World pose for map accumulation
 
   // Add to queue, drop old tasks if queue is full (max 2 to prevent delay buildup)
   {
@@ -481,6 +419,27 @@ void RGBColorizerROS::processing_thread_func() {
 
     logger->debug("colored frame with {} FOV points", colorized.points.size());
     RGBColorizerCallbacks::on_frame_colorized(colorized);
+
+    // Accumulate colorized points in world frame for map
+    {
+      std::lock_guard<std::mutex> lock(accumulated_map_mutex);
+
+      // Transform colorized points to world frame and accumulate
+      for (size_t i = 0; i < colorized.points.size(); i++) {
+        Eigen::Vector4d p_world = task.T_world_sensor * colorized.points[i];
+        accumulated_points.push_back(p_world);
+        accumulated_colors.push_back(colorized.colors[i]);
+      }
+
+      // Fire map updated callback (RvizViewer will throttle the actual publishing)
+      ColorizedMap map;
+      map.points = accumulated_points;
+      map.colors = accumulated_colors;
+      map.total_points = accumulated_points.size();
+      RGBColorizerCallbacks::on_map_updated(map);
+
+      logger->debug("accumulated map now has {} points", accumulated_points.size());
+    }
   }
 
   logger->info("Colorization processing thread stopped");

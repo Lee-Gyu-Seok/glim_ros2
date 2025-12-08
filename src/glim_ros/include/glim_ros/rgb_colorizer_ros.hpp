@@ -33,11 +33,23 @@ struct ColorizedPointCloud {
 };
 
 /**
+ * @brief Accumulated colorized map data (world frame)
+ */
+struct ColorizedMap {
+  std::vector<Eigen::Vector4d> points;  // Points in world frame
+  std::vector<uint32_t> colors;         // packed RGB (0x00RRGGBB)
+  size_t total_points;                  // Total accumulated points
+};
+
+/**
  * @brief Callbacks for RGB colorizer events
  */
 struct RGBColorizerCallbacks {
   /// @brief Called when a frame has been colorized (FOV-only points)
   static CallbackSlot<void(const ColorizedPointCloud&)> on_frame_colorized;
+
+  /// @brief Called when the accumulated map is updated (for /glim_ros/map)
+  static CallbackSlot<void(const ColorizedMap&)> on_map_updated;
 };
 
 /**
@@ -66,8 +78,8 @@ private:
   void processing_thread_func();
   void image_decode_thread_func();
 
-  // Calibration
-  bool load_calibration(const std::string& filepath);
+  // Calibration (loads from config_sensors.json)
+  bool load_calibration();
 
   // Colorization
   struct ColorizedPoints {
@@ -84,6 +96,7 @@ private:
     Eigen::Isometry3d T_camera_points;
     Eigen::Isometry3d T_lidar_imu;  // LiDAR-IMU transformation
     Eigen::Matrix<double, 8, Eigen::Dynamic> imu_rate_trajectory;  // IMU-rate trajectory [t, x, y, z, qx, qy, qz, qw]
+    Eigen::Isometry3d T_world_sensor;  // World pose for map accumulation
   };
 
   // Colorize only FOV-visible points (with optional motion compensation)
@@ -152,6 +165,15 @@ private:
   std::mutex task_queue_mutex;
   std::condition_variable task_cv;
   std::deque<ColorizeTask> task_queue;
+
+  // Accumulated colorized map (world frame)
+  std::mutex accumulated_map_mutex;
+  std::vector<Eigen::Vector4d> accumulated_points;  // Points in world frame
+  std::vector<uint32_t> accumulated_colors;         // RGB colors
+  rclcpp::Time last_map_pub_time;                   // For throttling map updates
+
+  // Map saving configuration
+  std::string map_save_path;  // Path to save map.pcd on shutdown
 };
 
 }  // namespace glim
