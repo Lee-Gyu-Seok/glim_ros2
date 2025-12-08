@@ -30,6 +30,7 @@ namespace glim {
 class TrajectoryManager;
 struct ColorizedPointCloud;
 struct ColorizedMap;
+struct ColorizedSubmap;
 
 /**
  * @brief Rviz-based viewer
@@ -55,6 +56,7 @@ private:
   void publish_rgb_map();
   void globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& submaps);
   void on_rgb_map_updated(const ColorizedMap& map);
+  void on_submap_colorized(const ColorizedSubmap& submap);
   void invoke(const std::function<void()>& task);
   void save_map_pcd(const std::string& dump_path);
 
@@ -111,11 +113,15 @@ private:
   // RGB colorizer integration
   bool rgb_colorizer_enabled;  // Whether RGB colorizer is active
 
-  // Accumulated RGB map (world frame) - updated via callback from RGBColorizer
-  std::mutex rgb_map_mutex;
-  std::vector<Eigen::Vector4d> accumulated_rgb_points;
-  std::vector<uint32_t> accumulated_rgb_colors;
-  bool rgb_map_updated;
+  // FOV-only RGB submaps - updated via on_submap_colorized callback
+  struct FovSubmap {
+    std::vector<Eigen::Vector4d> points;  // FOV-only points in submap origin frame
+    std::vector<uint32_t> colors;         // RGB colors
+    Eigen::Isometry3d T_world_origin;     // Submap pose (updated on globalmap update)
+  };
+  std::mutex fov_submaps_mutex;
+  std::vector<FovSubmap> fov_submaps;  // FOV-only submap list
+  bool fov_submaps_updated;
 
   // Map saving
   std::string map_save_path;

@@ -31,7 +31,7 @@
     "imu_topic": "/spadi/imu",
     "points_topic": "/spadi/pointcloud",
     "image_topic": "",
-    // RGB colorizer settings (calibration loaded from config_sensors.json)
+    // RGB colorizer settings (calibration is loaded from config_sensors.json)
     "rgb_colorizer_enabled": true,
     "rgb_image_topic": "/spadi/rgb_image/image_raw/compressed",
     "rgb_sync_tolerance": 0.05,

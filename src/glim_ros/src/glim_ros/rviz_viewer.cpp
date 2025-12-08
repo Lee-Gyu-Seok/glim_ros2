@@ -21,7 +21,7 @@
 
 namespace glim {
 
-RvizViewer::RvizViewer() : logger(create_module_logger("rviz")), rgb_map_updated(false) {
+RvizViewer::RvizViewer() : logger(create_module_logger("rviz")), fov_submaps_updated(false) {
   const Config config(GlobalConfig::get_config_path("config_ros"));
 
   imu_frame_id = config.param<std::string>("glim_ros", "imu_frame_id", "imu");
@@ -87,29 +87,42 @@ void RvizViewer::save_map_pcd(const std::string& dump_path) {
   logger->info("Saving map to: {}", save_path);
 
   if (rgb_colorizer_enabled) {
-    // Save RGB map from accumulated RGB points (with color)
+    // Save FOV-only RGB map from fov_submaps
+    // Points are already FOV-filtered (no gray points)
     pcl::PointCloud<pcl::PointXYZRGB> pcl_cloud;
-    std::lock_guard<std::mutex> lock(rgb_map_mutex);
 
-    if (accumulated_rgb_points.empty()) {
-      logger->warn("No RGB map points to save");
+    std::lock_guard<std::mutex> lock(fov_submaps_mutex);
+
+    if (fov_submaps.empty()) {
+      logger->warn("No FOV submaps to save");
       return;
     }
 
-    pcl_cloud.reserve(accumulated_rgb_points.size());
-    for (size_t i = 0; i < accumulated_rgb_points.size(); i++) {
-      pcl::PointXYZRGB pt;
-      pt.x = static_cast<float>(accumulated_rgb_points[i].x());
-      pt.y = static_cast<float>(accumulated_rgb_points[i].y());
-      pt.z = static_cast<float>(accumulated_rgb_points[i].z());
-
-      uint32_t rgb = accumulated_rgb_colors[i];
-      pt.r = (rgb >> 16) & 0xFF;
-      pt.g = (rgb >> 8) & 0xFF;
-      pt.b = rgb & 0xFF;
-      pcl_cloud.push_back(pt);
+    // Count total points
+    size_t total_points = 0;
+    for (const auto& submap : fov_submaps) {
+      total_points += submap.points.size();
     }
-    logger->info("Saving RGB map with {} points", pcl_cloud.size());
+    pcl_cloud.reserve(total_points);
+
+    // Transform and add all FOV points
+    for (const auto& submap : fov_submaps) {
+      for (size_t j = 0; j < submap.points.size(); j++) {
+        Eigen::Vector4d p_world = submap.T_world_origin * submap.points[j];
+        uint32_t rgb = submap.colors[j];
+
+        pcl::PointXYZRGB pt;
+        pt.x = static_cast<float>(p_world.x());
+        pt.y = static_cast<float>(p_world.y());
+        pt.z = static_cast<float>(p_world.z());
+        pt.r = (rgb >> 16) & 0xFF;
+        pt.g = (rgb >> 8) & 0xFF;
+        pt.b = rgb & 0xFF;
+        pcl_cloud.push_back(pt);
+      }
+    }
+
+    logger->info("Saving FOV-only RGB map: {} submaps, {} points", fov_submaps.size(), pcl_cloud.size());
 
     try {
       pcl::io::savePCDFileBinary(save_path, pcl_cloud);
@@ -120,11 +133,6 @@ void RvizViewer::save_map_pcd(const std::string& dump_path) {
   } else {
     // Save non-RGB map from submaps (XYZ only, no color)
     pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
-
-    if (submaps.empty()) {
-      logger->warn("No submap points to save");
-      return;
-    }
 
     // Concatenate all submaps
     size_t total_points = 0;
@@ -204,9 +212,9 @@ void RvizViewer::set_callbacks() {
       publish_colored_points(colorized);
     });
 
-    // Subscribe to RGB map updates for /glim_ros/map
-    RGBColorizerCallbacks::on_map_updated.add([this](const ColorizedMap& map) {
-      on_rgb_map_updated(map);
+    // Subscribe to FOV-only submap colorization callback
+    RGBColorizerCallbacks::on_submap_colorized.add([this](const ColorizedSubmap& submap) {
+      on_submap_colorized(submap);
     });
 
     logger->info("Subscribed to RGB colorizer callbacks");
@@ -489,12 +497,18 @@ void RvizViewer::globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& sub
   }
 
   // Invoke a submap concatenation task in the RvizViewer thread
-  invoke([this, latest_submap, new_submap_poses] {
+  invoke([this, latest_submap, new_submap_poses, &submaps] {
     this->submaps.push_back(latest_submap->frame);
     this->submap_poses = new_submap_poses;  // Store for map.pcd saving
 
-    // If RGB colorizer is enabled, map publishing is handled via RGB map callback
+    // If RGB colorizer is enabled, only update FOV submap poses
+    // Publishing is done in on_submap_colorized callback to ensure fov_submaps is populated first
     if (rgb_colorizer_enabled) {
+      // Update FOV submap poses (loop closure may have corrected them)
+      std::lock_guard<std::mutex> lock(fov_submaps_mutex);
+      for (size_t i = 0; i < std::min(fov_submaps.size(), new_submap_poses.size()); i++) {
+        fov_submaps[i].T_world_origin = new_submap_poses[i];
+      }
       return;
     }
 
@@ -625,22 +639,42 @@ void RvizViewer::publish_non_colorized_points(const EstimationFrame::ConstPtr& n
 }
 
 void RvizViewer::on_rgb_map_updated(const ColorizedMap& map) {
-  // Store accumulated RGB map data
+  // No longer used - FOV submaps are managed via on_submap_colorized
+  (void)map;
+}
+
+void RvizViewer::on_submap_colorized(const ColorizedSubmap& submap) {
+  // Store FOV-only colorized submap
   {
-    std::lock_guard<std::mutex> lock(rgb_map_mutex);
-    accumulated_rgb_points = map.points;
-    accumulated_rgb_colors = map.colors;
-    rgb_map_updated = true;
+    std::lock_guard<std::mutex> lock(fov_submaps_mutex);
+
+    // Ensure fov_submaps has enough space
+    if (submap.submap_id >= fov_submaps.size()) {
+      fov_submaps.resize(submap.submap_id + 1);
+    }
+
+    // Store FOV-only points and colors
+    fov_submaps[submap.submap_id].points = submap.points;
+    fov_submaps[submap.submap_id].colors = submap.colors;
+    fov_submaps[submap.submap_id].T_world_origin = submap.T_world_origin;
   }
 
-  // Schedule map publishing in the viewer thread
-  invoke([this] {
-    publish_rgb_map();
-  });
+  logger->debug("Stored FOV submap {} with {} points (total {} submaps)",
+               submap.submap_id, submap.points.size(), fov_submaps.size());
+
+  // Publish RGB map when new submap is colorized
+  // This ensures fov_submaps is populated before publishing
+  publish_rgb_map();
 }
 
 void RvizViewer::publish_rgb_map() {
-  if (!map_pub || !map_pub->get_subscription_count()) {
+  if (!map_pub) {
+    logger->debug("publish_rgb_map: map_pub is null");
+    return;
+  }
+
+  if (!map_pub->get_subscription_count()) {
+    logger->debug("publish_rgb_map: no subscribers for /glim_ros/map");
     return;
   }
 
@@ -648,24 +682,50 @@ void RvizViewer::publish_rgb_map() {
 
   // Throttle map publishing to every 10 seconds
   if (now - last_globalmap_pub_time < std::chrono::seconds(10)) {
+    logger->debug("publish_rgb_map: throttled (< 10s since last publish)");
     return;
   }
   last_globalmap_pub_time = now;
 
+  // Build point cloud from FOV submaps
   std::vector<Eigen::Vector4d> points;
   std::vector<uint32_t> colors;
-
   {
-    std::lock_guard<std::mutex> lock(rgb_map_mutex);
-    if (accumulated_rgb_points.empty() || !rgb_map_updated) {
+    std::lock_guard<std::mutex> lock(fov_submaps_mutex);
+    if (fov_submaps.empty()) {
+      logger->debug("publish_rgb_map: fov_submaps is empty");
       return;
     }
-    points = accumulated_rgb_points;
-    colors = accumulated_rgb_colors;
-    rgb_map_updated = false;
+
+    // Count total points
+    size_t total_points = 0;
+    for (const auto& submap : fov_submaps) {
+      total_points += submap.points.size();
+    }
+
+    if (total_points == 0) {
+      logger->debug("publish_rgb_map: no points in fov_submaps");
+      return;
+    }
+
+    points.reserve(total_points);
+    colors.reserve(total_points);
+
+    // Transform points to world frame and collect
+    for (const auto& submap : fov_submaps) {
+      for (size_t j = 0; j < submap.points.size(); j++) {
+        Eigen::Vector4d p_world = submap.T_world_origin * submap.points[j];
+        points.push_back(p_world);
+        colors.push_back(submap.colors[j]);
+      }
+    }
   }
 
-  logger->info("Publishing RGB map with {} points", points.size());
+  if (points.empty()) {
+    return;
+  }
+
+  logger->info("Publishing submap-based RGB map with {} points from {} submaps", points.size(), fov_submaps.size());
 
   // Create PointCloud2 message with RGB colors
   auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();

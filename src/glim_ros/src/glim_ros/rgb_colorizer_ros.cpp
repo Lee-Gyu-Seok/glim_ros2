@@ -10,6 +10,7 @@
 
 #include <gtsam_points/types/point_cloud_cpu.hpp>
 #include <glim/odometry/callbacks.hpp>
+#include <unordered_map>
 #include <glim/mapping/callbacks.hpp>
 #include <glim/util/logging.hpp>
 #include <glim/util/config.hpp>
@@ -60,6 +61,7 @@ inline cv::Vec3b bilinear_sample(const cv::Mat& image, float uf, float vf) {
 // Define the static callback slots
 CallbackSlot<void(const ColorizedPointCloud&)> RGBColorizerCallbacks::on_frame_colorized;
 CallbackSlot<void(const ColorizedMap&)> RGBColorizerCallbacks::on_map_updated;
+CallbackSlot<void(const ColorizedSubmap&)> RGBColorizerCallbacks::on_submap_colorized;
 
 RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), kill_switch(false) {
   logger->info("starting RGB colorizer ROS module");
@@ -86,6 +88,27 @@ RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), 
   // Motion compensation settings (compensate for LiDAR-camera time difference)
   enable_motion_compensation = config.param<bool>("glim_ros", "rgb_enable_motion_compensation", true);
   logger->info("Motion compensation: {}", enable_motion_compensation ? "enabled" : "disabled");
+
+  // Submap voxel downsampling settings - use GLIM's existing submap_downsample_resolution
+  // This ensures RGB FOV submaps have the same density as original GLIM submaps
+  {
+    // Try GPU config first, then CPU config
+    std::string sub_mapping_config;
+    try {
+      sub_mapping_config = GlobalConfig::get_config_path("config_sub_mapping_gpu");
+      Config sub_mapping(sub_mapping_config);
+      submap_voxel_resolution = sub_mapping.param<double>("sub_mapping", "submap_downsample_resolution", 0.08);
+    } catch (...) {
+      try {
+        sub_mapping_config = GlobalConfig::get_config_path("config_sub_mapping_cpu");
+        Config sub_mapping(sub_mapping_config);
+        submap_voxel_resolution = sub_mapping.param<double>("sub_mapping", "submap_downsample_resolution", 0.08);
+      } catch (...) {
+        submap_voxel_resolution = 0.08;  // Default fallback
+      }
+    }
+    logger->info("Submap voxel resolution: {}m (from GLIM sub_mapping config)", submap_voxel_resolution);
+  }
 
   if (enabled) {
     if (load_calibration()) {
@@ -440,6 +463,23 @@ void RGBColorizerROS::processing_thread_func() {
 
       logger->debug("accumulated map now has {} points", accumulated_points.size());
     }
+
+    // Store per-frame FOV data for later submap construction
+    {
+      std::lock_guard<std::mutex> lock(frame_fov_buffer_mutex);
+
+      FrameFovData fov_data;
+      fov_data.points = colorized.points;  // Points in sensor frame
+      fov_data.colors = colorized.colors;
+      fov_data.T_world_sensor = task.T_world_sensor;
+
+      frame_fov_buffer.emplace_back(task.stamp, std::move(fov_data));
+
+      // Limit buffer size
+      while (frame_fov_buffer.size() > MAX_FRAME_FOV_BUFFER_SIZE) {
+        frame_fov_buffer.pop_front();
+      }
+    }
   }
 
   logger->info("Colorization processing thread stopped");
@@ -450,45 +490,155 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
     return;
   }
 
-  // Colorize the new submap points
+  // Build submap FOV from stored per-frame FOV data
+  // This avoids the image buffer timing issue by using already-colorized frame data
   const SubMap::ConstPtr latest_submap = submaps.back();
-  const double stamp_endpoint_R = latest_submap->odom_frames.back()->stamp;
+  const size_t submap_id = submaps.size() - 1;
 
-  cv::Mat matched_image;
+  // Get timestamp range for frames in this submap
+  if (latest_submap->odom_frames.empty()) {
+    logger->warn("Submap {} has no odom_frames", submap_id);
+    return;
+  }
+
+  const double stamp_start = latest_submap->odom_frames.front()->stamp;
+  const double stamp_end = latest_submap->odom_frames.back()->stamp;
+
+  // Submap origin pose (T_world_origin)
+  const Eigen::Isometry3d T_world_origin = latest_submap->T_world_origin;
+  const Eigen::Isometry3d T_origin_world = T_world_origin.inverse();
+
+  // Collect FOV points from all frames in this submap's time range
+  std::vector<Eigen::Vector4d> submap_points;
+  std::vector<uint32_t> submap_colors;
+
   {
-    std::lock_guard<std::mutex> lock(image_buffer_mutex);
-    double min_dt = sync_tolerance;
-    for (const auto& img_pair : image_buffer) {
-      double dt = std::abs(img_pair.first - stamp_endpoint_R);
-      if (dt < min_dt) {
-        min_dt = dt;
-        matched_image = img_pair.second;
+    std::lock_guard<std::mutex> lock(frame_fov_buffer_mutex);
+
+    // Find frames within the submap's time range (with small tolerance)
+    const double tolerance = 0.01;  // 10ms tolerance
+
+    for (const auto& [stamp, fov_data] : frame_fov_buffer) {
+      if (stamp >= stamp_start - tolerance && stamp <= stamp_end + tolerance) {
+        // Transform points from sensor frame to submap origin frame
+        // p_origin = T_origin_world * T_world_sensor * p_sensor
+        const Eigen::Isometry3d T_origin_sensor = T_origin_world * fov_data.T_world_sensor;
+
+        for (size_t i = 0; i < fov_data.points.size(); i++) {
+          Eigen::Vector4d p_origin = T_origin_sensor * fov_data.points[i];
+          p_origin.w() = 1.0;  // Ensure homogeneous coordinate
+          submap_points.push_back(p_origin);
+          submap_colors.push_back(fov_data.colors[i]);
+        }
       }
     }
   }
 
-  if (matched_image.empty()) {
+  if (submap_points.empty()) {
+    // Check if we have any frame data at all
+    std::lock_guard<std::mutex> lock(frame_fov_buffer_mutex);
+    if (frame_fov_buffer.empty()) {
+      logger->warn("No FOV frames for submap {} (stamp range [{:.3f}, {:.3f}], frame buffer is EMPTY)",
+                   submap_id, stamp_start, stamp_end);
+    } else {
+      double oldest = frame_fov_buffer.front().first;
+      double newest = frame_fov_buffer.back().first;
+      logger->warn("No FOV frames for submap {} (stamp range [{:.3f}, {:.3f}], buffer range [{:.3f}, {:.3f}])",
+                   submap_id, stamp_start, stamp_end, oldest, newest);
+    }
     return;
   }
 
-  // Submap points are in submap origin frame
-  // At stamp_endpoint_R, the sensor is at T_origin_endpoint_R relative to submap origin
-  Eigen::Isometry3d T_camera_submap_origin = T_camera_lidar * latest_submap->T_origin_endpoint_R.inverse();
+  const size_t raw_count = submap_points.size();
 
-  std::vector<uint32_t> colors = colorize_points_all(
-    latest_submap->frame->points,
-    latest_submap->frame->size(),
-    matched_image,
-    T_camera_submap_origin);
+  // Apply voxel downsampling if enabled
+  if (submap_voxel_resolution > 0) {
+    // Hash function for voxel grid key (3D integer coordinates)
+    struct VoxelKey {
+      int64_t x, y, z;
+      bool operator==(const VoxelKey& other) const {
+        return x == other.x && y == other.y && z == other.z;
+      }
+    };
+    struct VoxelKeyHash {
+      size_t operator()(const VoxelKey& k) const {
+        // Combine hashes using prime numbers
+        size_t h = std::hash<int64_t>()(k.x);
+        h ^= std::hash<int64_t>()(k.y) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<int64_t>()(k.z) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+      }
+    };
 
-  // Store colors in submap's point cloud
-  auto point_cloud_cpu = std::dynamic_pointer_cast<gtsam_points::PointCloudCPU>(
-      std::const_pointer_cast<gtsam_points::PointCloud>(latest_submap->frame));
+    // Voxel accumulator: stores sum of positions and colors for averaging
+    struct VoxelAccum {
+      double sum_x = 0, sum_y = 0, sum_z = 0;
+      uint64_t sum_r = 0, sum_g = 0, sum_b = 0;
+      size_t count = 0;
+    };
 
-  if (point_cloud_cpu) {
-    point_cloud_cpu->add_aux_attribute<uint32_t>("rgb_colors", colors);
-    logger->debug("colored submap with {} points", colors.size());
+    std::unordered_map<VoxelKey, VoxelAccum, VoxelKeyHash> voxel_map;
+    const double inv_res = 1.0 / submap_voxel_resolution;
+
+    // Accumulate points into voxels
+    for (size_t i = 0; i < submap_points.size(); i++) {
+      const Eigen::Vector4d& p = submap_points[i];
+      const uint32_t color = submap_colors[i];
+
+      VoxelKey key;
+      key.x = static_cast<int64_t>(std::floor(p.x() * inv_res));
+      key.y = static_cast<int64_t>(std::floor(p.y() * inv_res));
+      key.z = static_cast<int64_t>(std::floor(p.z() * inv_res));
+
+      auto& accum = voxel_map[key];
+      accum.sum_x += p.x();
+      accum.sum_y += p.y();
+      accum.sum_z += p.z();
+      accum.sum_r += (color >> 16) & 0xFF;
+      accum.sum_g += (color >> 8) & 0xFF;
+      accum.sum_b += color & 0xFF;
+      accum.count++;
+    }
+
+    // Build downsampled point cloud
+    std::vector<Eigen::Vector4d> downsampled_points;
+    std::vector<uint32_t> downsampled_colors;
+    downsampled_points.reserve(voxel_map.size());
+    downsampled_colors.reserve(voxel_map.size());
+
+    for (const auto& [key, accum] : voxel_map) {
+      Eigen::Vector4d avg_point;
+      avg_point.x() = accum.sum_x / accum.count;
+      avg_point.y() = accum.sum_y / accum.count;
+      avg_point.z() = accum.sum_z / accum.count;
+      avg_point.w() = 1.0;
+
+      uint8_t avg_r = static_cast<uint8_t>(accum.sum_r / accum.count);
+      uint8_t avg_g = static_cast<uint8_t>(accum.sum_g / accum.count);
+      uint8_t avg_b = static_cast<uint8_t>(accum.sum_b / accum.count);
+      uint32_t avg_color = (static_cast<uint32_t>(avg_r) << 16) |
+                           (static_cast<uint32_t>(avg_g) << 8) |
+                           static_cast<uint32_t>(avg_b);
+
+      downsampled_points.push_back(avg_point);
+      downsampled_colors.push_back(avg_color);
+    }
+
+    submap_points = std::move(downsampled_points);
+    submap_colors = std::move(downsampled_colors);
   }
+
+  // Send FOV-only colorized submap to RvizViewer via callback
+  ColorizedSubmap colorized_submap;
+  colorized_submap.submap_id = submap_id;
+  colorized_submap.T_world_origin = T_world_origin;
+  colorized_submap.points = std::move(submap_points);
+  colorized_submap.colors = std::move(submap_colors);
+
+  logger->info("Colorized submap {} with {} FOV points (from {} raw, {} frames, voxel={}m)",
+               submap_id, colorized_submap.points.size(), raw_count,
+               latest_submap->odom_frames.size(), submap_voxel_resolution);
+  RGBColorizerCallbacks::on_submap_colorized(colorized_submap);
 }
 
 // Helper function to interpolate IMU pose from imu_rate_trajectory

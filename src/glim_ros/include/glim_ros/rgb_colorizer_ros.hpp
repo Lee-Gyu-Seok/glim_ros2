@@ -42,6 +42,17 @@ struct ColorizedMap {
 };
 
 /**
+ * @brief FOV-only submap data (submap origin frame)
+ * Used for submap-based map publishing and saving
+ */
+struct ColorizedSubmap {
+  size_t submap_id;                       // Submap index
+  Eigen::Isometry3d T_world_origin;       // Submap pose in world frame
+  std::vector<Eigen::Vector4d> points;    // FOV-only points in submap origin frame
+  std::vector<uint32_t> colors;           // packed RGB (0x00RRGGBB)
+};
+
+/**
  * @brief Callbacks for RGB colorizer events
  */
 struct RGBColorizerCallbacks {
@@ -50,6 +61,9 @@ struct RGBColorizerCallbacks {
 
   /// @brief Called when the accumulated map is updated (for /glim_ros/map)
   static CallbackSlot<void(const ColorizedMap&)> on_map_updated;
+
+  /// @brief Called when a submap has been colorized (FOV-only points)
+  static CallbackSlot<void(const ColorizedSubmap&)> on_submap_colorized;
 };
 
 /**
@@ -137,6 +151,9 @@ private:
   // Motion compensation configuration
   bool enable_motion_compensation;  // compensate for LiDAR-camera time difference
 
+  // Submap voxel downsampling configuration
+  double submap_voxel_resolution;  // voxel size for submap downsampling (0 = no downsampling)
+
   // LiDAR-Camera calibration
   cv::Mat camera_matrix;
   cv::Mat dist_coeffs;
@@ -171,6 +188,17 @@ private:
   std::vector<Eigen::Vector4d> accumulated_points;  // Points in world frame
   std::vector<uint32_t> accumulated_colors;         // RGB colors
   rclcpp::Time last_map_pub_time;                   // For throttling map updates
+
+  // Per-frame colorized FOV points buffer (for submap construction)
+  // Key: frame timestamp, Value: {points in sensor frame, colors}
+  struct FrameFovData {
+    std::vector<Eigen::Vector4d> points;  // Points in sensor frame
+    std::vector<uint32_t> colors;
+    Eigen::Isometry3d T_world_sensor;     // Sensor pose when captured
+  };
+  std::mutex frame_fov_buffer_mutex;
+  std::deque<std::pair<double, FrameFovData>> frame_fov_buffer;  // (stamp, data)
+  static constexpr size_t MAX_FRAME_FOV_BUFFER_SIZE = 200;  // Keep last 200 frames
 
   // Map saving configuration
   std::string map_save_path;  // Path to save map.pcd on shutdown

@@ -45,13 +45,13 @@ public:
    *
    */
   ScanContextLoopDetector() : logger(create_module_logger("scancontext")) {
-    logger->info("Creating ScanContext manager...");
+    logger->debug("Creating ScanContext manager...");
     sc.reset(new SCManager);
 
     // Load parameters from dedicated config file
     // Note: get_config_path() appends .json automatically, so don't include it in the name
     auto config_path = GlobalConfig::get_config_path("config_scan_context");
-    logger->info("Loading ScanContext config from: {}", config_path);
+    logger->debug("Loading ScanContext config from: {}", config_path);
 
     // Create a separate Config instance to load the ScanContext config file
     Config config(config_path);
@@ -79,18 +79,18 @@ public:
     icp_num_threads = config.param<int>("scan_context", "icp_num_threads", 4);
     loop_noise_score = config.param<double>("scan_context", "loop_noise_score", 0.5);
 
-    logger->info("ScanContext parameters:");
-    logger->info("  lidar_height: {}", sc->LIDAR_HEIGHT);
-    logger->info("  pc_num_ring: {}", sc->PC_NUM_RING);
-    logger->info("  pc_num_sector: {}", sc->PC_NUM_SECTOR);
-    logger->info("  pc_max_radius: {}", sc->PC_MAX_RADIUS);
-    logger->info("  pc_fov: {}", sc->PC_FOV);
-    logger->info("  pc_fov_offset: {}", sc->PC_FOV_OFFSET);
-    logger->info("  sc_dist_threshold: {}", sc->SC_DIST_THRES);
-    logger->info("  min_movement_threshold: {}", min_movement_threshold);
-    logger->info("  inlier_fraction_threshold: {}", inlier_fraction_threshold);
-    logger->info("  loop_noise_score: {}", loop_noise_score);
-    logger->info("ScanContext manager created");
+    logger->debug("ScanContext parameters:");
+    logger->debug("  lidar_height: {}", sc->LIDAR_HEIGHT);
+    logger->debug("  pc_num_ring: {}", sc->PC_NUM_RING);
+    logger->debug("  pc_num_sector: {}", sc->PC_NUM_SECTOR);
+    logger->debug("  pc_max_radius: {}", sc->PC_MAX_RADIUS);
+    logger->debug("  pc_fov: {}", sc->PC_FOV);
+    logger->debug("  pc_fov_offset: {}", sc->PC_FOV_OFFSET);
+    logger->debug("  sc_dist_threshold: {}", sc->SC_DIST_THRES);
+    logger->debug("  min_movement_threshold: {}", min_movement_threshold);
+    logger->debug("  inlier_fraction_threshold: {}", inlier_fraction_threshold);
+    logger->debug("  loop_noise_score: {}", loop_noise_score);
+    logger->info("ScanContext loop detector ready");
 
     frame_count = 0;
 
@@ -244,7 +244,7 @@ public:
           continue;
         }
 
-        logger->info("validate loop candidate=({}, {})", submap1->id, submap2->id);
+        logger->debug("validate loop candidate=({}, {})", submap1->id, submap2->id);
 
         // Initial guess for the relative pose between submaps
         Eigen::Isometry3d T_frame1_frame2 = Eigen::Isometry3d::Identity();
@@ -328,7 +328,8 @@ public:
     gtsam_points::LevenbergMarquardtExtParams lm_params;
     lm_params.setlambdaInitial(1e-12);
     lm_params.setMaxIterations(icp_max_iterations);
-    lm_params.callback = [this](const gtsam_points::LevenbergMarquardtOptimizationStatus& status, const gtsam::Values& values) { logger->info(status.to_string()); };
+    // LM optimization callback - use debug level to avoid terminal spam
+    lm_params.callback = [this](const gtsam_points::LevenbergMarquardtOptimizationStatus& status, const gtsam::Values& values) { logger->debug(status.to_string()); };
     gtsam_points::LevenbergMarquardtOptimizerExt optimizer(graph, values, lm_params);
     values = optimizer.optimize();
 
