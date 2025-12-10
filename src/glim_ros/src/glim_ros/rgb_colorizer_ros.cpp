@@ -359,20 +359,30 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
     }
   }
 
+  // Statistics counters (static to persist across calls)
+  static int total_frames_received = 0;
+  static int frames_no_image_match = 0;
+  static int frames_queued = 0;
+  total_frames_received++;
+
   if (matched_image.empty()) {
-    // Only log occasionally to avoid spam
-    static int skip_count = 0;
-    if (++skip_count % 100 == 0) {
+    frames_no_image_match++;
+    // Log occasionally to avoid spam
+    if (frames_no_image_match % 100 == 0) {
       std::lock_guard<std::mutex> lock(image_buffer_mutex);
       if (!image_buffer.empty()) {
         double min_stamp = image_buffer.front().first;
         double max_stamp = image_buffer.back().first;
-        logger->debug("no matching image: frame_stamp={}, buffer_range=[{}, {}]",
-          frame->stamp, min_stamp, max_stamp);
+        logger->warn("no matching image: frame_stamp={}, buffer_range=[{}, {}], stats: received={}, no_match={}, queued={}",
+          frame->stamp, min_stamp, max_stamp, total_frames_received, frames_no_image_match, frames_queued);
+      } else {
+        logger->warn("no matching image (buffer empty): received={}, no_match={}, queued={}",
+          total_frames_received, frames_no_image_match, frames_queued);
       }
     }
     return;
   }
+  frames_queued++;
 
   // Create async task - non-blocking to avoid affecting SLAM timing
   // Keep reference to raw_frame to avoid copying points
@@ -387,11 +397,13 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
   task.T_world_sensor = frame->T_world_sensor();  // World pose for map accumulation
 
   // Add to queue, drop old tasks if queue is full (max 2 to prevent delay buildup)
+  static int frames_dropped = 0;
   {
     std::lock_guard<std::mutex> lock(task_queue_mutex);
 
     // Drop old tasks if queue is getting too large
     while (task_queue.size() >= 2) {
+      frames_dropped++;
       logger->debug("dropping old colorization task (queue full)");
       task_queue.pop_front();
     }
@@ -399,6 +411,12 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
     task_queue.push_back(std::move(task));
   }
   task_cv.notify_one();
+
+  // Log statistics every 1000 frames
+  if (total_frames_received % 1000 == 0) {
+    logger->info("RGB colorizer stats: received={}, queued={}, no_match={}, dropped={}",
+      total_frames_received, frames_queued, frames_no_image_match, frames_dropped);
+  }
 }
 
 void RGBColorizerROS::processing_thread_func() {
@@ -425,6 +443,7 @@ void RGBColorizerROS::processing_thread_func() {
     // Process the task (colorization)
     // Access raw_points through the raw_frame reference (no copy)
     const auto& raw_points = task.raw_frame->raw_points->points;
+
     ColorizedPoints result = colorize_points_fov_only(
       raw_points.data(), raw_points.size(), task.image, task.T_camera_points, &task);
 
@@ -439,6 +458,7 @@ void RGBColorizerROS::processing_thread_func() {
     colorized.frame_id = "lidar";
     colorized.points = std::move(result.points);
     colorized.colors = std::move(result.colors);
+    colorized.T_world_sensor = task.T_world_sensor;
 
     logger->debug("colored frame with {} FOV points", colorized.points.size());
     RGBColorizerCallbacks::on_frame_colorized(colorized);
@@ -631,6 +651,7 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
   // Send FOV-only colorized submap to RvizViewer via callback
   ColorizedSubmap colorized_submap;
   colorized_submap.submap_id = submap_id;
+  colorized_submap.stamp = (stamp_start + stamp_end) / 2.0;  // Use middle timestamp for trajectory lookup
   colorized_submap.T_world_origin = T_world_origin;
   colorized_submap.points = std::move(submap_points);
   colorized_submap.colors = std::move(submap_colors);

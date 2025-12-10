@@ -30,6 +30,7 @@ struct ColorizedPointCloud {
   std::string frame_id;
   std::vector<Eigen::Vector4d> points;
   std::vector<uint32_t> colors;  // packed RGB (0x00RRGGBB)
+  Eigen::Isometry3d T_world_sensor;  // Sensor pose in world frame (for raw_map accumulation)
 };
 
 /**
@@ -47,6 +48,7 @@ struct ColorizedMap {
  */
 struct ColorizedSubmap {
   size_t submap_id;                       // Submap index
+  double stamp;                           // Representative timestamp for trajectory lookup
   Eigen::Isometry3d T_world_origin;       // Submap pose in world frame
   std::vector<Eigen::Vector4d> points;    // FOV-only points in submap origin frame
   std::vector<uint32_t> colors;           // packed RGB (0x00RRGGBB)
