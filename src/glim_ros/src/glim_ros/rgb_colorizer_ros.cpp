@@ -396,27 +396,16 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
   task.imu_rate_trajectory = frame->imu_rate_trajectory;  // IMU-rate trajectory for motion compensation
   task.T_world_sensor = frame->T_world_sensor();  // World pose for map accumulation
 
-  // Add to queue, drop old tasks if queue is full (max 2 to prevent delay buildup)
-  static int frames_dropped = 0;
+  // Add to queue, drop old tasks if queue is full (max 20 to prevent delay buildup)
   {
     std::lock_guard<std::mutex> lock(task_queue_mutex);
-
     // Drop old tasks if queue is getting too large
-    while (task_queue.size() >= 2) {
-      frames_dropped++;
-      logger->debug("dropping old colorization task (queue full)");
+    while (task_queue.size() >= 20) {
       task_queue.pop_front();
     }
-
     task_queue.push_back(std::move(task));
   }
   task_cv.notify_one();
-
-  // Log statistics every 1000 frames
-  if (total_frames_received % 1000 == 0) {
-    logger->info("RGB colorizer stats: received={}, queued={}, no_match={}, dropped={}",
-      total_frames_received, frames_queued, frames_no_image_match, frames_dropped);
-  }
 }
 
 void RGBColorizerROS::processing_thread_func() {
@@ -462,27 +451,6 @@ void RGBColorizerROS::processing_thread_func() {
 
     logger->debug("colored frame with {} FOV points", colorized.points.size());
     RGBColorizerCallbacks::on_frame_colorized(colorized);
-
-    // Accumulate colorized points in world frame for map
-    {
-      std::lock_guard<std::mutex> lock(accumulated_map_mutex);
-
-      // Transform colorized points to world frame and accumulate
-      for (size_t i = 0; i < colorized.points.size(); i++) {
-        Eigen::Vector4d p_world = task.T_world_sensor * colorized.points[i];
-        accumulated_points.push_back(p_world);
-        accumulated_colors.push_back(colorized.colors[i]);
-      }
-
-      // Fire map updated callback (RvizViewer will throttle the actual publishing)
-      ColorizedMap map;
-      map.points = accumulated_points;
-      map.colors = accumulated_colors;
-      map.total_points = accumulated_points.size();
-      RGBColorizerCallbacks::on_map_updated(map);
-
-      logger->debug("accumulated map now has {} points", accumulated_points.size());
-    }
 
     // Store per-frame FOV data for later submap construction
     {
@@ -656,9 +624,6 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
   colorized_submap.points = std::move(submap_points);
   colorized_submap.colors = std::move(submap_colors);
 
-  logger->info("Colorized submap {} with {} FOV points (from {} raw, {} frames, voxel={}m)",
-               submap_id, colorized_submap.points.size(), raw_count,
-               latest_submap->odom_frames.size(), submap_voxel_resolution);
   RGBColorizerCallbacks::on_submap_colorized(colorized_submap);
 }
 

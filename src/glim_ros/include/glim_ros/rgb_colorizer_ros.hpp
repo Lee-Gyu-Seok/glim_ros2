@@ -37,8 +37,8 @@ struct ColorizedPointCloud {
  * @brief Accumulated colorized map data (world frame)
  */
 struct ColorizedMap {
-  std::vector<Eigen::Vector4d> points;  // Points in world frame
-  std::vector<uint32_t> colors;         // packed RGB (0x00RRGGBB)
+  std::deque<Eigen::Vector4d> points;  // Points in world frame (deque for efficient growth)
+  std::deque<uint32_t> colors;         // packed RGB (0x00RRGGBB)
   size_t total_points;                  // Total accumulated points
 };
 
@@ -186,9 +186,10 @@ private:
   std::deque<ColorizeTask> task_queue;
 
   // Accumulated colorized map (world frame)
+  // Using deque to avoid reallocation overhead when map grows large
   std::mutex accumulated_map_mutex;
-  std::vector<Eigen::Vector4d> accumulated_points;  // Points in world frame
-  std::vector<uint32_t> accumulated_colors;         // RGB colors
+  std::deque<Eigen::Vector4d> accumulated_points;  // Points in world frame
+  std::deque<uint32_t> accumulated_colors;         // RGB colors
   rclcpp::Time last_map_pub_time;                   // For throttling map updates
 
   // Per-frame colorized FOV points buffer (for submap construction)
