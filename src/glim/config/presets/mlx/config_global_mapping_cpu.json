@@ -5,13 +5,12 @@
     "enable_optimization": true,
     // Use original damping scale (1e10 like original glim)
     "init_pose_damping_scale": 1e10,
-    // ENABLE between-factors with GICP (like original glim)
-    "create_between_factors": true,
-    "between_registration_type": "GICP",
+    // DISABLE between-factors - GICP doesn't work on this dataset
+    "create_between_factors": false,
+    "between_registration_type": "NONE",
     "registration_error_factor_type": "VGICP",
-    // Use finer voxel resolution for maximum accuracy
     "randomsampling_rate": 1.0,
-    "submap_voxel_resolution": 0.05,
+    "submap_voxel_resolution": 0.08,
     "submap_voxelmap_levels": 4,
     "submap_voxelmap_scaling_factor": 2.0,
     // More aggressive implicit loop detection for better accuracy

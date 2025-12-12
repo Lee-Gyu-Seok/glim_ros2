@@ -128,6 +128,7 @@ void GlobalMapping::insert_imu(const double stamp, const Eigen::Vector3d& linear
 }
 
 void GlobalMapping::insert_submap(const SubMap::Ptr& submap) {
+  GLIM_PROFILE_START("global_mapping");
   logger->debug("insert_submap id={} |frame|={}", submap->id, submap->frame->size());
 
   const int current = submaps.size();
@@ -241,6 +242,7 @@ void GlobalMapping::insert_submap(const SubMap::Ptr& submap) {
 
   update_submaps();
   Callbacks::on_update_submaps(submaps);
+  GLIM_PROFILE_STOP("global_mapping");
 }
 
 void GlobalMapping::insert_submap(int current, const SubMap::Ptr& submap) {
@@ -403,7 +405,6 @@ boost::shared_ptr<gtsam::NonlinearFactorGraph> GlobalMapping::create_between_fac
   }
 
   // gtsam_points GICP registration
-  GLIM_PROFILE_START("global_mapping/between_gicp");
   gtsam::Values values;
   values.insert(X(0), gtsam::Pose3::Identity());
   values.insert(X(1), init_delta);
@@ -438,7 +439,6 @@ boost::shared_ptr<gtsam::NonlinearFactorGraph> GlobalMapping::create_between_fac
   const auto H = linearized->hessianBlockDiagonal()[X(1)] + 1e6 * gtsam::Matrix6::Identity();
 
   factors->add(gtsam::make_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(last), X(current), estimated_delta, gtsam::noiseModel::Gaussian::Information(H)));
-  GLIM_PROFILE_STOP("global_mapping/between_gicp");
   return factors;
 }
 
@@ -530,7 +530,6 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
   gtsam::Key indeterminant_nearby_key = 0;
   bool values_key_error = false;
   try {
-    GLIM_PROFILE_START("global_mapping/isam2_update");
 #ifdef GTSAM_USE_TBB
     auto arena = static_cast<tbb::task_arena*>(tbb_task_arena.get());
     arena->execute([&] {
@@ -539,9 +538,7 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
 #ifdef GTSAM_USE_TBB
     });
 #endif
-    GLIM_PROFILE_STOP("global_mapping/isam2_update");
   } catch (const gtsam::IndeterminantLinearSystemException& e) {
-    GLIM_PROFILE_STOP("global_mapping/isam2_update");
     // Throttle error logging to avoid spam (log at most once every 5 seconds)
     static auto last_indeterminant_log_time = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     static int indeterminant_error_count = 0;
@@ -558,7 +555,6 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
     }
     indeterminant_nearby_key = e.nearbyVariable();
   } catch (const gtsam::ValuesKeyDoesNotExist& e) {
-    GLIM_PROFILE_STOP("global_mapping/isam2_update");
     // Throttle error logging
     static auto last_values_log_time = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     static int values_error_count = 0;
@@ -575,7 +571,6 @@ gtsam_points::ISAM2ResultExt GlobalMapping::update_isam2(const gtsam::NonlinearF
     indeterminant_nearby_key = e.key();
     values_key_error = true;
   } catch (const std::exception& e) {
-    GLIM_PROFILE_STOP("global_mapping/isam2_update");
     logger->error("an exception was caught during global map optimization!!");
     logger->error(e.what());
   }
