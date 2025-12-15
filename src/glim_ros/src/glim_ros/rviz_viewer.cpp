@@ -893,7 +893,8 @@ void RvizViewer::publish_rgb_map() {
     return;
   }
 
-  // First, collect all FOV points and colors in world frame for nearest neighbor search
+  // First, collect all FOV points and colors in world frame using optimized poses
+  // TrajectoryManager's odom2world() applies the latest loop closure corrections
   std::vector<Eigen::Vector3f> fov_world_points;
   std::vector<uint32_t> fov_colors;
   {
@@ -908,8 +909,16 @@ void RvizViewer::publish_rgb_map() {
         auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
         if (!fov_data || fov_data->points.empty()) continue;
 
+        // Use TrajectoryManager to get optimized world pose
+        // odom_frame->T_world_imu is actually T_odom_imu, trajectory->odom2world converts it
+        Eigen::Isometry3d T_world_sensor_optimized;
+        {
+          std::lock_guard<std::mutex> traj_lock(trajectory_mutex);
+          T_world_sensor_optimized = trajectory->odom2world(odom_frame->T_world_imu);
+        }
+
         for (size_t i = 0; i < fov_data->points.size(); i++) {
-          Eigen::Vector4d p_world = fov_data->T_world_sensor * fov_data->points[i];
+          Eigen::Vector4d p_world = T_world_sensor_optimized * fov_data->points[i];
           fov_world_points.push_back(Eigen::Vector3f(p_world.x(), p_world.y(), p_world.z()));
           fov_colors.push_back(i < fov_data->colors.size() ? fov_data->colors[i] : 0xFFFFFF);
         }
@@ -967,7 +976,7 @@ void RvizViewer::publish_rgb_map() {
     }
   }
 
-  logger->info("Publishing RGB map with {} GLIM submap points from {} submaps", points.size(), submaps.size());
+  logger->info("Publishing RGB map with {} GLIM submap points from {} submaps (optimized trajectory)", points.size(), submaps.size());
 
   // Create PointCloud2 message with RGB colors
   auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
