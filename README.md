@@ -148,6 +148,27 @@ colcon build
 git submodule update --init --recursive
 ```
 
+### CMake 4.0 호환성 문제 (VTK MPI 에러)
+
+pip로 CMake 4.0이 설치된 경우 아래와 같은 에러가 발생할 수 있습니다:
+
+```
+CMake Error at /usr/lib/x86_64-linux-gnu/cmake/vtk-9.1/VTK-targets.cmake:518 (set_target_properties):
+  The link interface of target "VTK::mpi" contains:
+    MPI::MPI_C
+  but the target was not found.
+```
+
+해결 방법:
+
+```bash
+# pip로 설치된 cmake 제거
+pip3 uninstall cmake
+
+# 시스템 cmake 확인 (3.22 이상이면 OK)
+cmake --version
+```
+
 ### Global Mapping에서 IndeterminantLinearSystemException 에러
 
 맵핑 중 아래와 같은 에러가 발생하는 경우:

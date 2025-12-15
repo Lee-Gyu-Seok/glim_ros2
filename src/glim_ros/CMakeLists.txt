@@ -18,6 +18,7 @@ ament_auto_find_build_dependencies()
 find_package(glim REQUIRED)
 find_package(Boost REQUIRED COMPONENTS program_options)
 find_package(OpenMP)
+find_package(MPI QUIET)
 find_package(PCL REQUIRED COMPONENTS common io filters)
 
 if(DEFINED GLIM_USE_OPENCV AND NOT GLIM_USE_OPENCV AND BUILD_WITH_CV_BRIDGE)

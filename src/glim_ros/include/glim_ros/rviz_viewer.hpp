@@ -105,6 +105,10 @@ private:
   std::vector<gtsam_points::PointCloud::ConstPtr> submaps;
   std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>> submap_poses;
 
+  // Store SubMap pointers for deferred FOV processing (for submap_map.pcd saving)
+  std::mutex submap_refs_mutex;
+  std::vector<SubMap::ConstPtr> submap_refs;  // SubMap references for FOV data access
+
   std::mutex invoke_queue_mutex;
   std::vector<std::function<void()>> invoke_queue;
 
@@ -139,6 +143,9 @@ private:
   // Map saving
   std::string map_save_path;
   double map_downsample_resolution;  // Voxel resolution for downsampled_map.pcd (0 = disable)
+
+  // Map publish interval
+  double map_publish_interval;  // Seconds between map publishes (default: 10.0)
 
   // Logging
   std::shared_ptr<spdlog::logger> logger;

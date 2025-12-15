@@ -280,6 +280,8 @@ int main(int argc, char** argv) {
           auto compressed_image_msg = std::make_shared<sensor_msgs::msg::CompressedImage>();
           compressed_image_serialization.deserialize_message(&serialized_msg, compressed_image_msg.get());
           rgb_image_pub->publish(*compressed_image_msg);
+          // Spin to allow RGB colorizer subscription callback to receive the image
+          rclcpp::spin_some(glim);
         }
       }
 

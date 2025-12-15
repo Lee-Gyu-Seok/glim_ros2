@@ -65,27 +65,36 @@ CallbackSlot<void(const ColorizedSubmap&)> RGBColorizerCallbacks::on_submap_colo
 RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), undist_maps_initialized(false) {
   logger->info("starting RGB colorizer ROS module");
 
-  const Config config(GlobalConfig::get_config_path("config_ros"));
+  // Load RGB colorizer specific config
+  const Config config(GlobalConfig::get_config_path("config_rgb_colorizer"));
 
-  enabled = config.param<bool>("glim_ros", "rgb_colorizer_enabled", false);
-  image_topic = config.param<std::string>("glim_ros", "rgb_image_topic", "/image/compressed");
-  sync_tolerance = config.param<double>("glim_ros", "rgb_sync_tolerance", 0.1);
-  max_buffer_size = config.param<int>("glim_ros", "rgb_max_buffer_size", 30);
+  enabled = config.param<bool>("rgb_colorizer", "enabled", false);
+  image_topic = config.param<std::string>("rgb_colorizer", "image_topic", "/image/compressed");
+  sync_tolerance = config.param<double>("rgb_colorizer", "sync_tolerance", 0.1);
+  max_buffer_size = config.param<int>("rgb_colorizer", "max_buffer_size", 30);
 
   // Z-buffer occlusion handling settings
-  enable_z_buffer = config.param<bool>("glim_ros", "rgb_enable_z_buffer", true);
-  splat_size_mode = config.param<std::string>("glim_ros", "rgb_splat_size_mode", "physical");
-  fixed_splat_size = config.param<int>("glim_ros", "rgb_fixed_splat_size", 3);
-  lidar_angular_resolution = config.param<double>("glim_ros", "rgb_lidar_angular_resolution", 0.2);  // degrees
+  enable_z_buffer = config.param<bool>("rgb_colorizer", "enable_z_buffer", true);
+  splat_size_mode = config.param<std::string>("rgb_colorizer", "splat_size_mode", "physical");
+  fixed_splat_size = config.param<int>("rgb_colorizer", "fixed_splat_size", 3);
+  lidar_angular_resolution = config.param<double>("rgb_colorizer", "lidar_angular_resolution", 0.2);  // degrees
   logger->info("Z-buffer occlusion handling: {} (mode: {}, fixed_size: {}, angular_res: {}°)",
                enable_z_buffer ? "enabled" : "disabled", splat_size_mode, fixed_splat_size, lidar_angular_resolution);
 
   // Image undistortion settings (for better color quality)
-  enable_undistort = config.param<bool>("glim_ros", "rgb_enable_undistort", true);
+  enable_undistort = config.param<bool>("rgb_colorizer", "enable_undistort", true);
   logger->info("Image undistortion: {}", enable_undistort ? "enabled" : "disabled");
 
+  // Image resize settings (for performance optimization)
+  image_resize_scale = config.param<double>("rgb_colorizer", "image_resize_scale", 1.0);
+  if (image_resize_scale <= 0 || image_resize_scale > 1.0) {
+    logger->warn("Invalid image_resize_scale={}, clamping to [0.1, 1.0]", image_resize_scale);
+    image_resize_scale = std::max(0.1, std::min(1.0, image_resize_scale));
+  }
+  logger->info("Image resize scale: {:.2f}", image_resize_scale);
+
   // Motion compensation settings (compensate for LiDAR-camera time difference)
-  enable_motion_compensation = config.param<bool>("glim_ros", "rgb_enable_motion_compensation", true);
+  enable_motion_compensation = config.param<bool>("rgb_colorizer", "enable_motion_compensation", true);
   logger->info("Motion compensation: {}", enable_motion_compensation ? "enabled" : "disabled");
 
   // Submap voxel downsampling settings - use GLIM's existing submap_downsample_resolution
@@ -214,6 +223,16 @@ bool RGBColorizerROS::load_calibration() {
     logger->info("  distortion: k1={:.5f}, k2={:.5f}, p1={:.5f}, p2={:.5f}, k3={:.5f}", k1, k2, p1, p2, k3);
     logger->info("  T_lidar_camera: t=[{:.4f}, {:.4f}, {:.4f}], q=[{:.4f}, {:.4f}, {:.4f}, {:.4f}]",
                  tx, ty, tz, qx, qy, qz, qw);
+
+    // Create scaled camera matrix for resized images
+    // Scale fx, fy, cx, cy by resize scale
+    double s = image_resize_scale;
+    scaled_camera_matrix = (cv::Mat_<double>(3, 3) << fx * s, 0, cx * s, 0, fy * s, cy * s, 0, 0, 1);
+    if (s < 1.0) {
+      logger->info("  scaled intrinsics (scale={:.2f}): fx={:.2f}, fy={:.2f}, cx={:.2f}, cy={:.2f}",
+                   s, fx * s, fy * s, cx * s, cy * s);
+    }
+
     return true;
   } catch (const std::exception& e) {
     logger->error("Failed to load calibration from config_sensors.json: {}", e.what());
@@ -228,14 +247,48 @@ void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::Sh
   double stamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
 
   try {
-    // Time: imdecode
+    // Time: imdecode (with optional reduced scale for JPEG)
+    // IMREAD_REDUCED flags decode JPEG at 1/2, 1/4, 1/8 scale directly in the decoder
+    // This is much faster than decode + resize because it skips IDCT for unused pixels
     auto t_decode_start = std::chrono::high_resolution_clock::now();
-    cv::Mat image = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_COLOR);
+    int decode_flag = cv::IMREAD_COLOR;
+    if (image_resize_scale <= 0.125) {
+      decode_flag = cv::IMREAD_REDUCED_COLOR_8;  // 1/8 scale
+    } else if (image_resize_scale <= 0.25) {
+      decode_flag = cv::IMREAD_REDUCED_COLOR_4;  // 1/4 scale
+    } else if (image_resize_scale <= 0.5) {
+      decode_flag = cv::IMREAD_REDUCED_COLOR_2;  // 1/2 scale
+    }
+    cv::Mat image = cv::imdecode(cv::Mat(msg->data), decode_flag);
     auto t_decode_end = std::chrono::high_resolution_clock::now();
     double decode_ms = std::chrono::duration<double, std::milli>(t_decode_end - t_decode_start).count();
 
     if (image.empty()) {
       return;
+    }
+
+    // Update scaled camera matrix based on actual decoded image size (first image only)
+    // IMREAD_REDUCED decodes at exact 1/2, 1/4, 1/8 ratios
+    static bool camera_matrix_updated = false;
+    if (!camera_matrix_updated && image_resize_scale < 1.0) {
+      // Calculate actual scale from original image size (assumed 1920x1200)
+      // TODO: Make original size configurable if needed
+      double actual_scale_x = image.cols / 1920.0;
+      double actual_scale_y = image.rows / 1200.0;
+      double actual_scale = (actual_scale_x + actual_scale_y) / 2.0;
+
+      double fx = camera_matrix.at<double>(0, 0);
+      double fy = camera_matrix.at<double>(1, 1);
+      double cx = camera_matrix.at<double>(0, 2);
+      double cy = camera_matrix.at<double>(1, 2);
+      scaled_camera_matrix = (cv::Mat_<double>(3, 3) <<
+        fx * actual_scale, 0, cx * actual_scale,
+        0, fy * actual_scale, cy * actual_scale,
+        0, 0, 1);
+      logger->info("Image decoded at {}x{} (scale={:.3f}), scaled intrinsics: fx={:.2f}, fy={:.2f}, cx={:.2f}, cy={:.2f}",
+                   image.cols, image.rows, actual_scale,
+                   fx * actual_scale, fy * actual_scale, cx * actual_scale, cy * actual_scale);
+      camera_matrix_updated = true;
     }
 
     // Initialize undistortion maps on first valid image (if enabled)
@@ -249,13 +302,20 @@ void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::Sh
       undist_maps_initialized = true;
     }
 
+    // IMREAD_REDUCED already decodes at reduced scale, so no additional resize needed
+    // Just measure time for logging consistency
+    auto t_resize_start = std::chrono::high_resolution_clock::now();
+    cv::Mat resized_image = image;  // No-op when using IMREAD_REDUCED
+    auto t_resize_end = std::chrono::high_resolution_clock::now();
+    double resize_ms = std::chrono::duration<double, std::milli>(t_resize_end - t_resize_start).count();
+
     // Time: undistortion
     auto t_undist_start = std::chrono::high_resolution_clock::now();
     cv::Mat final_image;
     if (enable_undistort && undist_maps_initialized) {
-      cv::remap(image, final_image, undist_map1, undist_map2, cv::INTER_LINEAR);
+      cv::remap(resized_image, final_image, undist_map1, undist_map2, cv::INTER_LINEAR);
     } else {
-      final_image = image;
+      final_image = resized_image;
     }
     auto t_undist_end = std::chrono::high_resolution_clock::now();
     double undist_ms = std::chrono::duration<double, std::milli>(t_undist_end - t_undist_start).count();
@@ -275,16 +335,17 @@ void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::Sh
 
     // Log timing every 100 images
     static int image_count = 0;
-    static double sum_decode_ms = 0, sum_undist_ms = 0, sum_total_ms = 0;
+    static double sum_decode_ms = 0, sum_resize_ms = 0, sum_undist_ms = 0, sum_total_ms = 0;
     image_count++;
     sum_decode_ms += decode_ms;
+    sum_resize_ms += resize_ms;
     sum_undist_ms += undist_ms;
     sum_total_ms += total_ms;
 
     if (image_count % 100 == 0) {
-      logger->info("[TIMING] image_callback avg: decode={:.2f}ms, undist={:.2f}ms, total={:.2f}ms",
-        sum_decode_ms / 100, sum_undist_ms / 100, sum_total_ms / 100);
-      sum_decode_ms = sum_undist_ms = sum_total_ms = 0;
+      logger->info("[TIMING] image_callback avg: decode={:.2f}ms, resize={:.2f}ms, undist={:.2f}ms, total={:.2f}ms",
+        sum_decode_ms / 100, sum_resize_ms / 100, sum_undist_ms / 100, sum_total_ms / 100);
+      sum_decode_ms = sum_resize_ms = sum_undist_ms = sum_total_ms = 0;
     }
   } catch (const std::exception& e) {
     logger->warn("Failed to decode image: {}", e.what());
@@ -430,151 +491,43 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
     return;
   }
 
-  // Build submap FOV from stored per-frame FOV data in custom_data
-  // This eliminates the buffer timing issue by reading directly from odom_frames
+  // OPTIMIZED: Don't process submap colorization synchronously here
+  // Instead, just send a lightweight notification with submap metadata
+  // The actual FOV data is already stored in each frame's custom_data["rgb_fov_data"]
+  // Heavy processing (coordinate transform + voxel downsampling) is deferred to:
+  // - publish_rgb_map() when RViz subscribers request the map
+  // - save_map_pcd() when saving the map to disk
+
   const SubMap::ConstPtr latest_submap = submaps.back();
   const size_t submap_id = submaps.size() - 1;
 
-  // Get timestamp range for frames in this submap
   if (latest_submap->odom_frames.empty()) {
     logger->warn("Submap {} has no odom_frames", submap_id);
     return;
   }
 
+  // Count frames with FOV data (lightweight check, no data copying)
+  size_t frames_with_fov = 0;
+  for (const auto& odom_frame : latest_submap->odom_frames) {
+    auto it = odom_frame->custom_data.find("rgb_fov_data");
+    if (it != odom_frame->custom_data.end() && it->second) {
+      frames_with_fov++;
+    }
+  }
+
   const double stamp_start = latest_submap->odom_frames.front()->stamp;
   const double stamp_end = latest_submap->odom_frames.back()->stamp;
 
-  // Submap origin pose (T_world_origin)
-  const Eigen::Isometry3d T_world_origin = latest_submap->T_world_origin;
-  const Eigen::Isometry3d T_origin_world = T_world_origin.inverse();
-
-  // Collect FOV points from all odom_frames' custom_data
-  std::vector<Eigen::Vector4d> submap_points;
-  std::vector<uint32_t> submap_colors;
-  size_t frames_with_fov = 0;
-
-  for (const auto& odom_frame : latest_submap->odom_frames) {
-    // Get FOV data from frame's custom_data
-    auto it = odom_frame->custom_data.find("rgb_fov_data");
-    if (it == odom_frame->custom_data.end() || !it->second) {
-      continue;
-    }
-
-    auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
-    if (!fov_data || fov_data->points.empty()) {
-      continue;
-    }
-
-    frames_with_fov++;
-
-    // Transform points from sensor frame to submap origin frame
-    // p_origin = T_origin_world * T_world_sensor * p_sensor
-    const Eigen::Isometry3d T_origin_sensor = T_origin_world * fov_data->T_world_sensor;
-
-    for (size_t i = 0; i < fov_data->points.size(); i++) {
-      Eigen::Vector4d p_origin = T_origin_sensor * fov_data->points[i];
-      p_origin.w() = 1.0;  // Ensure homogeneous coordinate
-      submap_points.push_back(p_origin);
-      submap_colors.push_back(fov_data->colors[i]);
-    }
-  }
-
-  if (submap_points.empty()) {
-    logger->warn("No FOV frames for submap {} (odom_frames={}, frames_with_fov={})",
-                 submap_id, latest_submap->odom_frames.size(), frames_with_fov);
-    return;
-  }
-
-  const size_t raw_count = submap_points.size();
-
-  // Apply voxel downsampling if enabled
-  if (submap_voxel_resolution > 0) {
-    // Hash function for voxel grid key (3D integer coordinates)
-    struct VoxelKey {
-      int64_t x, y, z;
-      bool operator==(const VoxelKey& other) const {
-        return x == other.x && y == other.y && z == other.z;
-      }
-    };
-    struct VoxelKeyHash {
-      size_t operator()(const VoxelKey& k) const {
-        // Combine hashes using prime numbers
-        size_t h = std::hash<int64_t>()(k.x);
-        h ^= std::hash<int64_t>()(k.y) + 0x9e3779b9 + (h << 6) + (h >> 2);
-        h ^= std::hash<int64_t>()(k.z) + 0x9e3779b9 + (h << 6) + (h >> 2);
-        return h;
-      }
-    };
-
-    // Voxel accumulator: stores sum of positions and colors for averaging
-    struct VoxelAccum {
-      double sum_x = 0, sum_y = 0, sum_z = 0;
-      uint64_t sum_r = 0, sum_g = 0, sum_b = 0;
-      size_t count = 0;
-    };
-
-    std::unordered_map<VoxelKey, VoxelAccum, VoxelKeyHash> voxel_map;
-    const double inv_res = 1.0 / submap_voxel_resolution;
-
-    // Accumulate points into voxels
-    for (size_t i = 0; i < submap_points.size(); i++) {
-      const Eigen::Vector4d& p = submap_points[i];
-      const uint32_t color = submap_colors[i];
-
-      VoxelKey key;
-      key.x = static_cast<int64_t>(std::floor(p.x() * inv_res));
-      key.y = static_cast<int64_t>(std::floor(p.y() * inv_res));
-      key.z = static_cast<int64_t>(std::floor(p.z() * inv_res));
-
-      auto& accum = voxel_map[key];
-      accum.sum_x += p.x();
-      accum.sum_y += p.y();
-      accum.sum_z += p.z();
-      accum.sum_r += (color >> 16) & 0xFF;
-      accum.sum_g += (color >> 8) & 0xFF;
-      accum.sum_b += color & 0xFF;
-      accum.count++;
-    }
-
-    // Build downsampled point cloud
-    std::vector<Eigen::Vector4d> downsampled_points;
-    std::vector<uint32_t> downsampled_colors;
-    downsampled_points.reserve(voxel_map.size());
-    downsampled_colors.reserve(voxel_map.size());
-
-    for (const auto& [key, accum] : voxel_map) {
-      Eigen::Vector4d avg_point;
-      avg_point.x() = accum.sum_x / accum.count;
-      avg_point.y() = accum.sum_y / accum.count;
-      avg_point.z() = accum.sum_z / accum.count;
-      avg_point.w() = 1.0;
-
-      uint8_t avg_r = static_cast<uint8_t>(accum.sum_r / accum.count);
-      uint8_t avg_g = static_cast<uint8_t>(accum.sum_g / accum.count);
-      uint8_t avg_b = static_cast<uint8_t>(accum.sum_b / accum.count);
-      uint32_t avg_color = (static_cast<uint32_t>(avg_r) << 16) |
-                           (static_cast<uint32_t>(avg_g) << 8) |
-                           static_cast<uint32_t>(avg_b);
-
-      downsampled_points.push_back(avg_point);
-      downsampled_colors.push_back(avg_color);
-    }
-
-    submap_points = std::move(downsampled_points);
-    submap_colors = std::move(downsampled_colors);
-  }
-
-  // Send FOV-only colorized submap to RvizViewer via callback
+  // Send lightweight notification - no point data, just metadata
+  // rviz_viewer will process the actual data lazily when needed
   ColorizedSubmap colorized_submap;
   colorized_submap.submap_id = submap_id;
-  colorized_submap.stamp = (stamp_start + stamp_end) / 2.0;  // Use middle timestamp for trajectory lookup
-  colorized_submap.T_world_origin = T_world_origin;
-  colorized_submap.points = std::move(submap_points);
-  colorized_submap.colors = std::move(submap_colors);
+  colorized_submap.stamp = (stamp_start + stamp_end) / 2.0;
+  colorized_submap.T_world_origin = latest_submap->T_world_origin;
+  // Points and colors are empty - rviz_viewer will build them on demand
 
-  logger->info("Colorized submap {} with {} FOV points (from {} raw, {}/{} frames with FOV, voxel={}m)",
-               submap_id, colorized_submap.points.size(), raw_count,
-               frames_with_fov, latest_submap->odom_frames.size(), submap_voxel_resolution);
+  logger->info("Submap {} ready ({}/{} frames with FOV data) - deferred processing",
+               submap_id, frames_with_fov, latest_submap->odom_frames.size());
   RGBColorizerCallbacks::on_submap_colorized(colorized_submap);
 }
 
@@ -672,10 +625,12 @@ RGBColorizerROS::ColorizedPoints RGBColorizerROS::colorize_points_fov_only(
   }
 
   // Pre-extract camera intrinsics for direct projection (avoid OpenCV overhead)
-  const double fx = camera_matrix.at<double>(0, 0);
-  const double fy = camera_matrix.at<double>(1, 1);
-  const double cx = camera_matrix.at<double>(0, 2);
-  const double cy = camera_matrix.at<double>(1, 2);
+  // Use scaled camera matrix if image was resized
+  const cv::Mat& active_camera_matrix = (image_resize_scale < 1.0) ? scaled_camera_matrix : camera_matrix;
+  const double fx = active_camera_matrix.at<double>(0, 0);
+  const double fy = active_camera_matrix.at<double>(1, 1);
+  const double cx = active_camera_matrix.at<double>(0, 2);
+  const double cy = active_camera_matrix.at<double>(1, 2);
 
   // Distortion coefficients (only needed when image is not undistorted)
   const double k1 = dist_coeffs.at<double>(0);

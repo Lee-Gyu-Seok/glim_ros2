@@ -145,6 +145,10 @@ private:
   cv::Mat undist_map1;    // pre-computed undistortion map X
   cv::Mat undist_map2;    // pre-computed undistortion map Y
 
+  // Image resize configuration
+  double image_resize_scale;  // Scale factor for image resizing (0.5 = half, 1.0 = original)
+  cv::Mat scaled_camera_matrix;  // Camera matrix adjusted for resize scale
+
   // Motion compensation configuration
   bool enable_motion_compensation;  // compensate for LiDAR-camera time difference
 

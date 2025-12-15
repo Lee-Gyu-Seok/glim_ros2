@@ -1,1 +1,4 @@
 imgui.ini
+
+# GLIM Log files (map data, trajectories, etc.)
+src/glim_ros/Log/
