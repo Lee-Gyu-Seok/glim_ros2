@@ -102,15 +102,12 @@ OdometryEstimationCPU::OdometryEstimationCPU(const OdometryEstimationCPUParams& 
 OdometryEstimationCPU::~OdometryEstimationCPU() {}
 
 gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int current, const boost::shared_ptr<gtsam::ImuFactor>& imu_factor, gtsam::Values& new_values) {
-  GLIM_PROFILE_START("odometry_cpu/create_factors");
-
   const auto params = static_cast<const OdometryEstimationCPUParams*>(this->params.get());
   const int last = current - 1;
 
   if (current == 0) {
     last_T_target_imu = frames[current]->T_world_imu;
     update_target(current, frames[current]->T_world_imu);
-    GLIM_PROFILE_STOP("odometry_cpu/create_factors");
     return gtsam::NonlinearFactorGraph();
   }
 
@@ -124,8 +121,6 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
 
   // SmallGICP uses its own registration pipeline with IncrementalVoxelMap
   if (params->registration_type == "SmallGICP") {
-    GLIM_PROFILE_START("odometry/small_gicp_optimization");
-
     // Convert current frame to small_gicp::PointCloud format
     auto source = std::make_shared<small_gicp::PointCloud>();
     source->resize(frames[current]->frame->size());
@@ -149,7 +144,6 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
     auto result = registration.align(*target_small_gicp_voxelmap, *source, *target_small_gicp_voxelmap, pred_T_target_imu);
 
     T_target_imu = result.T_target_source;
-    GLIM_PROFILE_STOP("odometry/small_gicp_optimization");
   } else {
     // Create frame-to-model matching factor (GICP/VGICP)
     gtsam::NonlinearFactorGraph matching_cost_factors;
@@ -200,7 +194,6 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
     // lm_params.setDiagonalDamping(true);
     gtsam_points::LevenbergMarquardtOptimizerExt optimizer(graph, values, lm_params);
 
-    GLIM_PROFILE_START("odometry/icp_optimization");
 #ifdef GTSAM_USE_TBB
     auto arena = static_cast<tbb::task_arena*>(this->tbb_task_arena.get());
     arena->execute([&] {
@@ -209,7 +202,6 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
 #ifdef GTSAM_USE_TBB
     });
 #endif
-    GLIM_PROFILE_STOP("odometry/icp_optimization");
 
     T_target_imu = Eigen::Isometry3d(values.at<gtsam::Pose3>(X(current)).matrix());
   }
@@ -233,7 +225,6 @@ gtsam::NonlinearFactorGraph OdometryEstimationCPU::create_factors(const int curr
   update_target(current, T_target_imu);
   last_T_target_imu = T_target_imu;
 
-  GLIM_PROFILE_STOP("odometry_cpu/create_factors");
   return factors;
 }
 

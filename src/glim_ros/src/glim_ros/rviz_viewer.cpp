@@ -768,11 +768,6 @@ void RvizViewer::publish_non_colorized_points(const EstimationFrame::ConstPtr& n
   logger->debug("published non-colorized points (stamp={} num_points={})", new_frame->stamp, new_frame->frame->size());
 }
 
-void RvizViewer::on_rgb_map_updated(const ColorizedMap& map) {
-  // No longer used - FOV submaps are managed via on_submap_colorized
-  (void)map;
-}
-
 void RvizViewer::on_submap_colorized(const ColorizedSubmap& submap) {
   // Store FOV-only colorized submap
   {

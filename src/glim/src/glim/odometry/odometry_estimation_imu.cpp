@@ -122,7 +122,7 @@ void OdometryEstimationIMU::insert_imu(const double stamp, const Eigen::Vector3d
 }
 
 EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const PreprocessedFrame::Ptr& raw_frame, std::vector<EstimationFrame::ConstPtr>& marginalized_frames) {
-  GLIM_PROFILE_START("odometry/total");
+  GLIM_PROFILE_START("odometry");
 
   if (raw_frame->size()) {
     logger->trace("insert_frame points={} times={} ~ {}", raw_frame->size(), raw_frame->times.front(), raw_frame->times.back());
@@ -150,7 +150,7 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
 
     if (init_state == nullptr) {
       logger->debug("waiting for initial IMU state estimation to be finished");
-      GLIM_PROFILE_STOP("odometry/total");
+      GLIM_PROFILE_STOP("odometry");
       return nullptr;
     }
     init_estimation.reset();
@@ -222,7 +222,7 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
     update_smoother(new_factors, new_values, new_stamps);
     update_frames(current, new_factors);
 
-    GLIM_PROFILE_STOP("odometry/total");
+    GLIM_PROFILE_STOP("odometry");
     return frames.back();
   }
 
@@ -372,7 +372,7 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
     logger->warn("odometry estimation smoother fallback happened (time={})", raw_frame->stamp);
   }
 
-  GLIM_PROFILE_STOP("odometry/total");
+  GLIM_PROFILE_STOP("odometry");
   return frames[current];
 }
 

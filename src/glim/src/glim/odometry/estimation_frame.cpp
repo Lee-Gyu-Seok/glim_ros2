@@ -16,7 +16,8 @@ EstimationFrame::Ptr EstimationFrame::clone_wo_points() const {
   cloned->raw_frame.reset();
   cloned->frame.reset();
   cloned->voxelmaps.clear();
-  cloned->custom_data.clear();
+  // Keep custom_data - it may contain lightweight extension data (e.g., RGB FOV points)
+  // that should persist through the mapping pipeline
   return cloned;
 }
 

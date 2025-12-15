@@ -37,14 +37,14 @@
     "rgb_sync_tolerance": 0.05,
     "rgb_max_buffer_size": 30,
     // Z-buffer occlusion handling (like merge_image_pointcloud)
-    "rgb_enable_z_buffer": false,          // Disable Z-buffer to keep all FOV points
+    "rgb_enable_z_buffer": false,          // Enable Z-buffer based occlusion handling
     "rgb_splat_size_mode": "physical",     // "fixed", "adaptive" (depth-based), or "physical" (LiDAR angular resolution based)
     "rgb_fixed_splat_size": 3,             // Splat size when mode is "fixed"
     "rgb_lidar_angular_resolution": 0.2,   // LiDAR angular resolution in degrees (for "physical" mode)
     // Image undistortion (better color quality via bilinear interpolation during remap)
     "rgb_enable_undistort": true,          // Undistort image first, then use simple pinhole projection
     // Motion compensation (correct for LiDAR-camera time difference using IMU trajectory)
-    "rgb_enable_motion_compensation": true,  // Motion compensation enabled
+    "rgb_enable_motion_compensation": false,
     // Map saving settings
     "map_downsample_resolution": 0.2,  // Voxel resolution for downsampled_map.pcd (0 = disable)
     // QoS options

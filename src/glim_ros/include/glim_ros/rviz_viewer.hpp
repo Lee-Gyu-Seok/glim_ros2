@@ -29,7 +29,6 @@ namespace glim {
 
 class TrajectoryManager;
 struct ColorizedPointCloud;
-struct ColorizedMap;
 struct ColorizedSubmap;
 
 /**
@@ -55,7 +54,6 @@ private:
   void publish_non_colorized_points(const EstimationFrame::ConstPtr& new_frame);
   void publish_rgb_map();
   void globalmap_on_update_submaps(const std::vector<SubMap::Ptr>& submaps);
-  void on_rgb_map_updated(const ColorizedMap& map);
   void on_submap_colorized(const ColorizedSubmap& submap);
   void invoke(const std::function<void()>& task);
   void save_map_pcd(const std::string& dump_path);

@@ -2,9 +2,7 @@
 
 #include <deque>
 #include <mutex>
-#include <thread>
-#include <atomic>
-#include <condition_variable>
+#include <memory>
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
@@ -23,6 +21,16 @@ class logger;
 namespace glim {
 
 /**
+ * @brief FOV colorized data stored in EstimationFrame::custom_data
+ * Key: "rgb_fov_data"
+ */
+struct FrameRGBFovData {
+  std::vector<Eigen::Vector4d> points;  // FOV-only points in sensor frame
+  std::vector<uint32_t> colors;         // packed RGB (0x00RRGGBB)
+  Eigen::Isometry3d T_world_sensor;     // Sensor pose when captured
+};
+
+/**
  * @brief Colorized point cloud data (FOV-only points with RGB colors)
  */
 struct ColorizedPointCloud {
@@ -31,15 +39,6 @@ struct ColorizedPointCloud {
   std::vector<Eigen::Vector4d> points;
   std::vector<uint32_t> colors;  // packed RGB (0x00RRGGBB)
   Eigen::Isometry3d T_world_sensor;  // Sensor pose in world frame (for raw_map accumulation)
-};
-
-/**
- * @brief Accumulated colorized map data (world frame)
- */
-struct ColorizedMap {
-  std::deque<Eigen::Vector4d> points;  // Points in world frame (deque for efficient growth)
-  std::deque<uint32_t> colors;         // packed RGB (0x00RRGGBB)
-  size_t total_points;                  // Total accumulated points
 };
 
 /**
@@ -60,9 +59,6 @@ struct ColorizedSubmap {
 struct RGBColorizerCallbacks {
   /// @brief Called when a frame has been colorized (FOV-only points)
   static CallbackSlot<void(const ColorizedPointCloud&)> on_frame_colorized;
-
-  /// @brief Called when the accumulated map is updated (for /glim_ros/map)
-  static CallbackSlot<void(const ColorizedMap&)> on_map_updated;
 
   /// @brief Called when a submap has been colorized (FOV-only points)
   static CallbackSlot<void(const ColorizedSubmap&)> on_submap_colorized;
@@ -90,10 +86,6 @@ private:
   void on_update_submaps(const std::vector<SubMap::Ptr>& submaps);
   void image_callback(const sensor_msgs::msg::CompressedImage::SharedPtr msg);
 
-  // Async processing threads
-  void processing_thread_func();
-  void image_decode_thread_func();
-
   // Calibration (loads from config_sensors.json)
   bool load_calibration();
 
@@ -103,7 +95,7 @@ private:
     std::vector<uint32_t> colors;  // packed RGB (0x00RRGGBB)
   };
 
-  // Task for async processing
+  // Task for processing
   struct ColorizeTask {
     double stamp;
     double image_stamp;  // Timestamp of matched image (for motion compensation)
@@ -114,6 +106,9 @@ private:
     Eigen::Matrix<double, 8, Eigen::Dynamic> imu_rate_trajectory;  // IMU-rate trajectory [t, x, y, z, qx, qy, qz, qw]
     Eigen::Isometry3d T_world_sensor;  // World pose for map accumulation
   };
+
+  // Synchronous processing - returns FOV data to be stored in frame's custom_data
+  std::shared_ptr<FrameRGBFovData> process_colorization_sync(const ColorizeTask& task);
 
   // Colorize only FOV-visible points (with optional motion compensation)
   ColorizedPoints colorize_points_fov_only(
@@ -165,46 +160,11 @@ private:
   std::mutex image_buffer_mutex;
   std::deque<std::pair<double, cv::Mat>> image_buffer;
 
-  // Raw compressed image buffer (for async decoding)
-  struct RawImageData {
-    double stamp;
-    std::vector<uint8_t> data;
-  };
-  std::mutex raw_image_mutex;
-  std::condition_variable raw_image_cv;
-  std::deque<RawImageData> raw_image_queue;
-
   // ROS subscription
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr image_sub;
 
-  // Async processing
-  std::atomic<bool> kill_switch;
-  std::thread processing_thread;
-  std::thread image_decode_thread;  // Async image decoding
-  std::mutex task_queue_mutex;
-  std::condition_variable task_cv;
-  std::deque<ColorizeTask> task_queue;
-
-  // Accumulated colorized map (world frame)
-  // Using deque to avoid reallocation overhead when map grows large
-  std::mutex accumulated_map_mutex;
-  std::deque<Eigen::Vector4d> accumulated_points;  // Points in world frame
-  std::deque<uint32_t> accumulated_colors;         // RGB colors
-  rclcpp::Time last_map_pub_time;                   // For throttling map updates
-
-  // Per-frame colorized FOV points buffer (for submap construction)
-  // Key: frame timestamp, Value: {points in sensor frame, colors}
-  struct FrameFovData {
-    std::vector<Eigen::Vector4d> points;  // Points in sensor frame
-    std::vector<uint32_t> colors;
-    Eigen::Isometry3d T_world_sensor;     // Sensor pose when captured
-  };
-  std::mutex frame_fov_buffer_mutex;
-  std::deque<std::pair<double, FrameFovData>> frame_fov_buffer;  // (stamp, data)
-  static constexpr size_t MAX_FRAME_FOV_BUFFER_SIZE = 200;  // Keep last 200 frames
-
-  // Map saving configuration
-  std::string map_save_path;  // Path to save map.pcd on shutdown
+  // Undistortion maps initialized flag
+  bool undist_maps_initialized;
 };
 
 }  // namespace glim

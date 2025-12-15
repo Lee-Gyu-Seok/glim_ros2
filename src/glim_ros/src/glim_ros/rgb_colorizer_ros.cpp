@@ -60,10 +60,9 @@ inline cv::Vec3b bilinear_sample(const cv::Mat& image, float uf, float vf) {
 
 // Define the static callback slots
 CallbackSlot<void(const ColorizedPointCloud&)> RGBColorizerCallbacks::on_frame_colorized;
-CallbackSlot<void(const ColorizedMap&)> RGBColorizerCallbacks::on_map_updated;
 CallbackSlot<void(const ColorizedSubmap&)> RGBColorizerCallbacks::on_submap_colorized;
 
-RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), kill_switch(false) {
+RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), undist_maps_initialized(false) {
   logger->info("starting RGB colorizer ROS module");
 
   const Config config(GlobalConfig::get_config_path("config_ros"));
@@ -123,27 +122,13 @@ RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), 
 
   if (enabled) {
     set_callbacks();
-    // Start async processing threads
-    processing_thread = std::thread(&RGBColorizerROS::processing_thread_func, this);
-    image_decode_thread = std::thread(&RGBColorizerROS::image_decode_thread_func, this);
-    logger->info("Started async colorization and image decode threads");
+    logger->info("RGB colorizer running in SYNCHRONOUS mode");
   }
 
   logger->info("ready");
 }
 
 RGBColorizerROS::~RGBColorizerROS() {
-  // Stop async processing threads
-  kill_switch = true;
-  task_cv.notify_all();
-  raw_image_cv.notify_all();
-
-  if (processing_thread.joinable()) {
-    processing_thread.join();
-  }
-  if (image_decode_thread.joinable()) {
-    image_decode_thread.join();
-  }
 }
 
 std::vector<GenericTopicSubscription::Ptr> RGBColorizerROS::create_subscriptions(rclcpp::Node& node) {
@@ -237,91 +222,73 @@ bool RGBColorizerROS::load_calibration() {
 }
 
 void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
-  // Non-blocking: just queue raw data for async decoding
+  // Synchronous image decoding with timing
+  auto t_start = std::chrono::high_resolution_clock::now();
+
   double stamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
 
-  {
-    std::lock_guard<std::mutex> lock(raw_image_mutex);
+  try {
+    // Time: imdecode
+    auto t_decode_start = std::chrono::high_resolution_clock::now();
+    cv::Mat image = cv::imdecode(cv::Mat(msg->data), cv::IMREAD_COLOR);
+    auto t_decode_end = std::chrono::high_resolution_clock::now();
+    double decode_ms = std::chrono::duration<double, std::milli>(t_decode_end - t_decode_start).count();
 
-    // Drop old images if queue is getting too large
-    while (raw_image_queue.size() >= max_buffer_size) {
-      raw_image_queue.pop_front();
+    if (image.empty()) {
+      return;
     }
 
-    RawImageData raw_data;
-    raw_data.stamp = stamp;
-    raw_data.data = msg->data;  // Copy compressed data (small)
-    raw_image_queue.push_back(std::move(raw_data));
-  }
-  raw_image_cv.notify_one();
-}
+    // Initialize undistortion maps on first valid image (if enabled)
+    if (enable_undistort && !undist_maps_initialized) {
+      cv::Size img_size(image.cols, image.rows);
+      cv::initUndistortRectifyMap(
+        camera_matrix, dist_coeffs, cv::Mat(),
+        camera_matrix, img_size, CV_32FC1,
+        undist_map1, undist_map2);
+      logger->info("Initialized undistortion maps for {}x{} images", image.cols, image.rows);
+      undist_maps_initialized = true;
+    }
 
-void RGBColorizerROS::image_decode_thread_func() {
-  logger->info("Image decode thread started");
+    // Time: undistortion
+    auto t_undist_start = std::chrono::high_resolution_clock::now();
+    cv::Mat final_image;
+    if (enable_undistort && undist_maps_initialized) {
+      cv::remap(image, final_image, undist_map1, undist_map2, cv::INTER_LINEAR);
+    } else {
+      final_image = image;
+    }
+    auto t_undist_end = std::chrono::high_resolution_clock::now();
+    double undist_ms = std::chrono::duration<double, std::milli>(t_undist_end - t_undist_start).count();
 
-  // Flag to initialize undistortion maps on first image
-  bool undist_maps_initialized = false;
-
-  while (!kill_switch) {
-    RawImageData raw_data;
-
-    // Wait for raw image data
+    // Add to decoded image buffer
     {
-      std::unique_lock<std::mutex> lock(raw_image_mutex);
-      raw_image_cv.wait(lock, [this]() {
-        return !raw_image_queue.empty() || kill_switch;
-      });
+      std::lock_guard<std::mutex> lock(image_buffer_mutex);
+      image_buffer.emplace_back(stamp, final_image);
 
-      if (kill_switch) {
-        break;
+      while (image_buffer.size() > max_buffer_size) {
+        image_buffer.pop_front();
       }
-
-      raw_data = std::move(raw_image_queue.front());
-      raw_image_queue.pop_front();
     }
 
-    // Decode image (slow operation, done in this separate thread)
-    try {
-      cv::Mat image = cv::imdecode(cv::Mat(raw_data.data), cv::IMREAD_COLOR);
-      if (image.empty()) {
-        continue;
-      }
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
-      // Initialize undistortion maps on first valid image (if enabled)
-      if (enable_undistort && !undist_maps_initialized) {
-        cv::Size img_size(image.cols, image.rows);
-        // Use same camera matrix for new output (no scaling)
-        cv::initUndistortRectifyMap(
-          camera_matrix, dist_coeffs, cv::Mat(),
-          camera_matrix, img_size, CV_32FC1,
-          undist_map1, undist_map2);
-        logger->info("Initialized undistortion maps for {}x{} images", image.cols, image.rows);
-        undist_maps_initialized = true;
-      }
+    // Log timing every 100 images
+    static int image_count = 0;
+    static double sum_decode_ms = 0, sum_undist_ms = 0, sum_total_ms = 0;
+    image_count++;
+    sum_decode_ms += decode_ms;
+    sum_undist_ms += undist_ms;
+    sum_total_ms += total_ms;
 
-      // Apply undistortion if enabled
-      cv::Mat final_image;
-      if (enable_undistort && undist_maps_initialized) {
-        cv::remap(image, final_image, undist_map1, undist_map2, cv::INTER_LINEAR);
-      } else {
-        final_image = image;
-      }
-
-      // Add to decoded image buffer
-      {
-        std::lock_guard<std::mutex> lock(image_buffer_mutex);
-        image_buffer.emplace_back(raw_data.stamp, final_image);
-
-        while (image_buffer.size() > max_buffer_size) {
-          image_buffer.pop_front();
-        }
-      }
-    } catch (const std::exception& e) {
-      logger->warn("Failed to decode image: {}", e.what());
+    if (image_count % 100 == 0) {
+      logger->info("[TIMING] image_callback avg: decode={:.2f}ms, undist={:.2f}ms, total={:.2f}ms",
+        sum_decode_ms / 100, sum_undist_ms / 100, sum_total_ms / 100);
+      sum_decode_ms = sum_undist_ms = sum_total_ms = 0;
     }
+  } catch (const std::exception& e) {
+    logger->warn("Failed to decode image: {}", e.what());
   }
-
-  logger->info("Image decode thread stopped");
 }
 
 void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
@@ -336,141 +303,126 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
   }
 
   // Find matching image for this frame
-  // Strategy: Use the most recent image that is not newer than the frame timestamp
-  // This works for both real-time and rosbag playback scenarios
   cv::Mat matched_image;
   double matched_image_stamp = 0;
-  double matched_dt = 0;
   {
     std::lock_guard<std::mutex> lock(image_buffer_mutex);
 
-    // Find the latest image with timestamp <= frame->stamp + sync_tolerance
     for (auto it = image_buffer.rbegin(); it != image_buffer.rend(); ++it) {
       double img_stamp = it->first;
-      double dt = frame->stamp - img_stamp;  // Positive if image is older than frame
+      double dt = frame->stamp - img_stamp;
 
-      // Accept images that are up to sync_tolerance older, or slightly newer (within tolerance)
       if (dt >= -sync_tolerance) {
         matched_image = it->second;
-        matched_image_stamp = img_stamp;  // Store image timestamp for motion compensation
-        matched_dt = dt;
-        break;  // Found the most recent valid image
+        matched_image_stamp = img_stamp;
+        break;
       }
     }
   }
 
-  // Statistics counters (static to persist across calls)
+  // Statistics counters
   static int total_frames_received = 0;
   static int frames_no_image_match = 0;
-  static int frames_queued = 0;
+  static int frames_processed = 0;
   total_frames_received++;
 
   if (matched_image.empty()) {
     frames_no_image_match++;
-    // Log occasionally to avoid spam
     if (frames_no_image_match % 100 == 0) {
       std::lock_guard<std::mutex> lock(image_buffer_mutex);
       if (!image_buffer.empty()) {
-        double min_stamp = image_buffer.front().first;
-        double max_stamp = image_buffer.back().first;
-        logger->warn("no matching image: frame_stamp={}, buffer_range=[{}, {}], stats: received={}, no_match={}, queued={}",
-          frame->stamp, min_stamp, max_stamp, total_frames_received, frames_no_image_match, frames_queued);
+        logger->warn("no matching image: frame_stamp={}, buffer=[{}, {}], stats: received={}, no_match={}, processed={}",
+          frame->stamp, image_buffer.front().first, image_buffer.back().first,
+          total_frames_received, frames_no_image_match, frames_processed);
       } else {
-        logger->warn("no matching image (buffer empty): received={}, no_match={}, queued={}",
-          total_frames_received, frames_no_image_match, frames_queued);
+        logger->warn("no matching image (buffer empty): received={}, no_match={}, processed={}",
+          total_frames_received, frames_no_image_match, frames_processed);
       }
     }
     return;
   }
-  frames_queued++;
+  frames_processed++;
 
-  // Create async task - non-blocking to avoid affecting SLAM timing
-  // Keep reference to raw_frame to avoid copying points
+  // Create task and process synchronously
   ColorizeTask task;
   task.stamp = frame->stamp;
-  task.image_stamp = matched_image_stamp;  // Store image timestamp for motion compensation
-  task.raw_frame = frame->raw_frame;  // Just increment reference count, no copy
-  task.image = matched_image;  // Shallow copy (reference counted)
+  task.image_stamp = matched_image_stamp;
+  task.raw_frame = frame->raw_frame;
+  task.image = matched_image;
   task.T_camera_points = T_camera_lidar;
-  task.T_lidar_imu = frame->T_lidar_imu;  // LiDAR-IMU transformation
-  task.imu_rate_trajectory = frame->imu_rate_trajectory;  // IMU-rate trajectory for motion compensation
-  task.T_world_sensor = frame->T_world_sensor();  // World pose for map accumulation
+  task.T_lidar_imu = frame->T_lidar_imu;
+  task.imu_rate_trajectory = frame->imu_rate_trajectory;
+  task.T_world_sensor = frame->T_world_sensor();
 
-  // Add to queue, drop old tasks if queue is full (max 20 to prevent delay buildup)
-  {
-    std::lock_guard<std::mutex> lock(task_queue_mutex);
-    // Drop old tasks if queue is getting too large
-    while (task_queue.size() >= 20) {
-      task_queue.pop_front();
-    }
-    task_queue.push_back(std::move(task));
+  // Process synchronously (blocking) and get FOV data
+  auto fov_data = process_colorization_sync(task);
+
+  // Store FOV data in frame's custom_data for later submap construction
+  // Using const_cast because custom_data is designed to be modified by extensions
+  if (fov_data) {
+    auto& mutable_custom_data = const_cast<std::unordered_map<std::string, std::shared_ptr<void>>&>(frame->custom_data);
+    mutable_custom_data["rgb_fov_data"] = fov_data;
   }
-  task_cv.notify_one();
+
+  // Log statistics every 1000 frames
+  if (total_frames_received % 1000 == 0) {
+    logger->info("RGB colorizer stats (SYNC): received={}, processed={}, no_match={}",
+      total_frames_received, frames_processed, frames_no_image_match);
+  }
 }
 
-void RGBColorizerROS::processing_thread_func() {
-  logger->info("Colorization processing thread started");
+std::shared_ptr<FrameRGBFovData> RGBColorizerROS::process_colorization_sync(const ColorizeTask& task) {
+  // Process the task (colorization) synchronously with timing
+  auto t_start = std::chrono::high_resolution_clock::now();
 
-  while (!kill_switch) {
-    ColorizeTask task;
+  const auto& raw_points = task.raw_frame->raw_points->points;
 
-    // Wait for a task
-    {
-      std::unique_lock<std::mutex> lock(task_queue_mutex);
-      task_cv.wait(lock, [this]() {
-        return !task_queue.empty() || kill_switch;
-      });
+  // Time: colorization
+  auto t_colorize_start = std::chrono::high_resolution_clock::now();
+  ColorizedPoints result = colorize_points_fov_only(
+    raw_points.data(), raw_points.size(), task.image, task.T_camera_points, &task);
+  auto t_colorize_end = std::chrono::high_resolution_clock::now();
+  double colorize_ms = std::chrono::duration<double, std::milli>(t_colorize_end - t_colorize_start).count();
 
-      if (kill_switch) {
-        break;
-      }
-
-      task = std::move(task_queue.front());
-      task_queue.pop_front();
-    }
-
-    // Process the task (colorization)
-    // Access raw_points through the raw_frame reference (no copy)
-    const auto& raw_points = task.raw_frame->raw_points->points;
-
-    ColorizedPoints result = colorize_points_fov_only(
-      raw_points.data(), raw_points.size(), task.image, task.T_camera_points, &task);
-
-    if (result.points.empty()) {
-      logger->debug("no FOV points for frame at stamp {}", task.stamp);
-      continue;
-    }
-
-    // Create ColorizedPointCloud and notify subscribers
-    ColorizedPointCloud colorized;
-    colorized.stamp = task.stamp;
-    colorized.frame_id = "lidar";
-    colorized.points = std::move(result.points);
-    colorized.colors = std::move(result.colors);
-    colorized.T_world_sensor = task.T_world_sensor;
-
-    logger->debug("colored frame with {} FOV points", colorized.points.size());
-    RGBColorizerCallbacks::on_frame_colorized(colorized);
-
-    // Store per-frame FOV data for later submap construction
-    {
-      std::lock_guard<std::mutex> lock(frame_fov_buffer_mutex);
-
-      FrameFovData fov_data;
-      fov_data.points = colorized.points;  // Points in sensor frame
-      fov_data.colors = colorized.colors;
-      fov_data.T_world_sensor = task.T_world_sensor;
-
-      frame_fov_buffer.emplace_back(task.stamp, std::move(fov_data));
-
-      // Limit buffer size
-      while (frame_fov_buffer.size() > MAX_FRAME_FOV_BUFFER_SIZE) {
-        frame_fov_buffer.pop_front();
-      }
-    }
+  if (result.points.empty()) {
+    logger->debug("no FOV points for frame at stamp {}", task.stamp);
+    return nullptr;
   }
 
-  logger->info("Colorization processing thread stopped");
+  // Create ColorizedPointCloud and notify subscribers
+  ColorizedPointCloud colorized;
+  colorized.stamp = task.stamp;
+  colorized.frame_id = "lidar";
+  colorized.points = std::move(result.points);
+  colorized.colors = std::move(result.colors);
+  colorized.T_world_sensor = task.T_world_sensor;
+
+  // Notify frame colorized callback
+  RGBColorizerCallbacks::on_frame_colorized(colorized);
+
+  // Create FOV data to be stored in frame's custom_data
+  auto fov_data = std::make_shared<FrameRGBFovData>();
+  fov_data->points = std::move(colorized.points);
+  fov_data->colors = std::move(colorized.colors);
+  fov_data->T_world_sensor = task.T_world_sensor;
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double total_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+  // Log timing every 100 frames
+  static int frame_count = 0;
+  static double sum_colorize_ms = 0, sum_total_ms = 0;
+  frame_count++;
+  sum_colorize_ms += colorize_ms;
+  sum_total_ms += total_ms;
+
+  if (frame_count % 100 == 0) {
+    logger->info("[TIMING] colorization avg: colorize={:.2f}ms, total={:.2f}ms (points={})",
+      sum_colorize_ms / 100, sum_total_ms / 100, raw_points.size());
+    sum_colorize_ms = sum_total_ms = 0;
+  }
+
+  return fov_data;
 }
 
 void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps) {
@@ -478,8 +430,8 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
     return;
   }
 
-  // Build submap FOV from stored per-frame FOV data
-  // This avoids the image buffer timing issue by using already-colorized frame data
+  // Build submap FOV from stored per-frame FOV data in custom_data
+  // This eliminates the buffer timing issue by reading directly from odom_frames
   const SubMap::ConstPtr latest_submap = submaps.back();
   const size_t submap_id = submaps.size() - 1;
 
@@ -496,44 +448,40 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
   const Eigen::Isometry3d T_world_origin = latest_submap->T_world_origin;
   const Eigen::Isometry3d T_origin_world = T_world_origin.inverse();
 
-  // Collect FOV points from all frames in this submap's time range
+  // Collect FOV points from all odom_frames' custom_data
   std::vector<Eigen::Vector4d> submap_points;
   std::vector<uint32_t> submap_colors;
+  size_t frames_with_fov = 0;
 
-  {
-    std::lock_guard<std::mutex> lock(frame_fov_buffer_mutex);
+  for (const auto& odom_frame : latest_submap->odom_frames) {
+    // Get FOV data from frame's custom_data
+    auto it = odom_frame->custom_data.find("rgb_fov_data");
+    if (it == odom_frame->custom_data.end() || !it->second) {
+      continue;
+    }
 
-    // Find frames within the submap's time range (with small tolerance)
-    const double tolerance = 0.01;  // 10ms tolerance
+    auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
+    if (!fov_data || fov_data->points.empty()) {
+      continue;
+    }
 
-    for (const auto& [stamp, fov_data] : frame_fov_buffer) {
-      if (stamp >= stamp_start - tolerance && stamp <= stamp_end + tolerance) {
-        // Transform points from sensor frame to submap origin frame
-        // p_origin = T_origin_world * T_world_sensor * p_sensor
-        const Eigen::Isometry3d T_origin_sensor = T_origin_world * fov_data.T_world_sensor;
+    frames_with_fov++;
 
-        for (size_t i = 0; i < fov_data.points.size(); i++) {
-          Eigen::Vector4d p_origin = T_origin_sensor * fov_data.points[i];
-          p_origin.w() = 1.0;  // Ensure homogeneous coordinate
-          submap_points.push_back(p_origin);
-          submap_colors.push_back(fov_data.colors[i]);
-        }
-      }
+    // Transform points from sensor frame to submap origin frame
+    // p_origin = T_origin_world * T_world_sensor * p_sensor
+    const Eigen::Isometry3d T_origin_sensor = T_origin_world * fov_data->T_world_sensor;
+
+    for (size_t i = 0; i < fov_data->points.size(); i++) {
+      Eigen::Vector4d p_origin = T_origin_sensor * fov_data->points[i];
+      p_origin.w() = 1.0;  // Ensure homogeneous coordinate
+      submap_points.push_back(p_origin);
+      submap_colors.push_back(fov_data->colors[i]);
     }
   }
 
   if (submap_points.empty()) {
-    // Check if we have any frame data at all
-    std::lock_guard<std::mutex> lock(frame_fov_buffer_mutex);
-    if (frame_fov_buffer.empty()) {
-      logger->warn("No FOV frames for submap {} (stamp range [{:.3f}, {:.3f}], frame buffer is EMPTY)",
-                   submap_id, stamp_start, stamp_end);
-    } else {
-      double oldest = frame_fov_buffer.front().first;
-      double newest = frame_fov_buffer.back().first;
-      logger->warn("No FOV frames for submap {} (stamp range [{:.3f}, {:.3f}], buffer range [{:.3f}, {:.3f}])",
-                   submap_id, stamp_start, stamp_end, oldest, newest);
-    }
+    logger->warn("No FOV frames for submap {} (odom_frames={}, frames_with_fov={})",
+                 submap_id, latest_submap->odom_frames.size(), frames_with_fov);
     return;
   }
 
@@ -624,6 +572,9 @@ void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps)
   colorized_submap.points = std::move(submap_points);
   colorized_submap.colors = std::move(submap_colors);
 
+  logger->info("Colorized submap {} with {} FOV points (from {} raw, {}/{} frames with FOV, voxel={}m)",
+               submap_id, colorized_submap.points.size(), raw_count,
+               frames_with_fov, latest_submap->odom_frames.size(), submap_voxel_resolution);
   RGBColorizerCallbacks::on_submap_colorized(colorized_submap);
 }
 
