@@ -87,12 +87,9 @@ const gtsam::Value& IncrementalFixedLagSmootherExtWithFallback::calculateEstimat
     return value;
   } catch (const gtsam::ValuesKeyDoesNotExist& e) {
     // Key was marginalized out - return cached value if available
-    std::cerr << "warning: key " << gtsam::Symbol(key) << " does not exist (marginalized), ";
     if (cached != values.end()) {
-      std::cerr << "returning cached value" << std::endl;
       return cached->value;
     }
-    std::cerr << "no cached value available" << std::endl;
     throw;
   } catch (std::exception& e) {
     std::cerr << "warning: an exception was caught in fixed-lag smoother calculateEstimate!!" << std::endl;
@@ -105,7 +102,6 @@ const gtsam::Value& IncrementalFixedLagSmootherExtWithFallback::calculateEstimat
     } catch (const gtsam::ValuesKeyDoesNotExist& e2) {
       // After fallback, key still doesn't exist - return cached value
       if (cached != values.end()) {
-        std::cerr << "warning: returning cached value for " << gtsam::Symbol(key) << " after fallback" << std::endl;
         return cached->value;
       }
       throw;
@@ -171,8 +167,7 @@ void IncrementalFixedLagSmootherExtWithFallback::update_fallback_state() {
 
 void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
   fallback_happend = true;
-  std::cout << "falling back!!" << std::endl;
-  std::cout << "smoother_lag:" << smoother->smootherLag() << std::endl;
+  std::cerr << "[FixedLagSmoother] fallback triggered (smoother_lag=" << smoother->smootherLag() << ")" << std::endl;
 
   // Find basic value statistics
   std::unordered_map<char, double> min_stamps;
@@ -180,7 +175,6 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
   for (const auto& value : values) {
     const auto found = stamps.find(value.key);
     if (found == stamps.end()) {
-      std::cerr << "warning: corresponding stamp is not found for " << gtsam::Symbol(value.key) << std::endl;
       continue;
     }
 
@@ -203,16 +197,7 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
     }
   }
 
-  std::cout << boost::format("current_stamp:%.6f") % current_stamp << std::endl;
   const double fixation_duration = 1.0;
-  for (const auto& min_stamp : min_stamps) {
-    const char chr = min_stamp.first;
-    const auto minmax_id = minmax_ids[chr];
-
-    std::cout << boost::format("- symbol=%c min_id=%d max_id=%d min_stamp=%.6f fixation=%.6f") % chr % minmax_id.first % minmax_id.second %
-                   min_stamp.second % (min_stamp.second + fixation_duration)
-              << std::endl;
-  }
 
   // connectivity check
   std::unordered_map<gtsam::Key, std::vector<gtsam::NonlinearFactor*>> factormap;
@@ -232,8 +217,6 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
     if (found != factormap.end()) {
       traversed_keys.insert(symbol);
       traverse_queue.insert(traverse_queue.end(), found->second.begin(), found->second.end());
-    } else {
-      std::cerr << "symbol not found:" << symbol << std::endl;
     }
   }
 
@@ -257,7 +240,6 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
   std::unordered_set<gtsam::Key> keys_to_remove;
   for (const auto& value : values) {
     if (!traversed_keys.count(value.key)) {
-      std::cerr << "unreached key found:" << gtsam::Symbol(value.key) << std::endl;
       keys_to_remove.insert(value.key);
     }
   }
@@ -273,12 +255,6 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
   for (const auto& factor : factors) {
     if (std::all_of(factor->keys().begin(), factor->keys().end(), [&](const auto key) { return values.exists(key); })) {
       new_factors.add(factor);
-    } else {
-      std::cerr << "remove factor:";
-      for (const auto key : factor->keys()) {
-        std::cerr << " " << gtsam::Symbol(key);
-      }
-      std::cerr << std::endl;
     }
   }
   this->factors = new_factors;
@@ -298,7 +274,6 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
 
     for (const auto var_type : fix_variable_types) {
       if (symbol.chr() == var_type.first) {
-        std::cout << "fixing " << symbol << std::endl;
         switch (var_type.second) {
           case 0:
             new_factors.emplace_shared<gtsam::PriorFactor<gtsam::Pose3>>(
@@ -329,25 +304,6 @@ void IncrementalFixedLagSmootherExtWithFallback::fallback_smoother() const {
     new_stamps[stamp.first] = std::max(time_horizon + 0.5, stamp.second);
   }
 
-  std::cout << "factors:" << factors.size() << " fixed:" << new_factors.size() - factors.size() << " values:" << values.size()
-            << " stamps:" << stamps.size() << std::endl;
-
-  for (const auto& factor : new_factors) {
-    for (const auto key : factor->keys()) {
-      if (!values.exists(key)) {
-        std::cout << "illegal factor found!!" << std::endl;
-        for (const auto key : factor->keys()) {
-          std::cout << "- " << gtsam::Symbol(key) << " exists:" << values.exists(key) << std::endl;
-        }
-      }
-    }
-  }
-
-  for (const auto& stamp : stamps) {
-    if (!values.exists(stamp.first)) {
-      std::cout << "illegal stamp found!! " << gtsam::Symbol(stamp.first) << std::endl;
-    }
-  }
 
   const double saved_smoother_lag = smoother->smootherLag();
   const auto saved_params = smoother->params();
