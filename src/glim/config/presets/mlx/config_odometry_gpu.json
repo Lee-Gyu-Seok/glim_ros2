@@ -9,7 +9,7 @@
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
     "fix_imu_bias": false,
-    "vgicp_resolution": 0.2,
+    "vgicp_resolution": 0.25,
     "vgicp_voxelmap_levels": 2,
     "vgicp_voxelmap_scaling_factor": 2.0,
     "save_imu_rate_trajectory": true,

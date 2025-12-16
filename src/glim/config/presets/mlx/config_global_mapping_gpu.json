@@ -11,16 +11,16 @@
     "registration_error_factor_type": "VGICP_GPU",
     // Use fine voxel resolution for accuracy
     "randomsampling_rate": 1.0,
-    "submap_voxel_resolution": 0.08,
+    "submap_voxel_resolution": 0.1,
     "submap_voxelmap_levels": 4,
     "submap_voxelmap_scaling_factor": 2.0,
-    // AGGRESSIVE implicit loop detection for accuracy (compensate for no between-factors)
+    // Accuracy-focused implicit loop detection (based on successful run 202003)
     "max_implicit_loop_distance": 100.0,
     "min_implicit_loop_overlap": 0.1,
     // Use Gauss-Newton solver (like original glim)
     "use_isam2_dogleg": false,
     // Use original ISAM2 settings
-    "isam2_relinearize_skip": 1,
+    "isam2_relinearize_skip": 2,
     "isam2_relinearize_thresh": 0.1
   }
 }

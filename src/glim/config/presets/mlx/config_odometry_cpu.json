@@ -11,7 +11,7 @@
     "fix_imu_bias": false,
     // Registration type: "GICP", "VGICP", or "SmallGICP"
     "registration_type": "SmallGICP",
-    "max_iterations": 15,
+    "max_iterations": 10,
     "lru_thresh": 100,
     "target_downsampling_rate": 0.1,
     // GICP (iVox-based) params
@@ -25,7 +25,7 @@
     "small_gicp_max_correspondence_distance": 2.0,
     "small_gicp_rotation_eps": 0.1,
     "small_gicp_translation_eps": 0.001,
-    "small_gicp_voxel_resolution": 0.2,
+    "small_gicp_voxel_resolution": 0.25,
     "save_imu_rate_trajectory": true,
     "num_threads": 8
   }

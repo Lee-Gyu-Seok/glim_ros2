@@ -44,7 +44,7 @@ RvizViewer::RvizViewer() : logger(create_module_logger("rviz")), fov_submaps_upd
   rgb_colorizer_enabled = config.param<bool>("glim_ros", "rgb_colorizer_enabled", false);
   map_save_path = config.param<std::string>("glim_ros", "map_save_path", "");
   map_downsample_resolution = config.param<double>("glim_ros", "map_downsample_resolution", 0.5);
-  map_publish_interval = config.param<double>("glim_ros", "map_publish_interval", 10.0);
+  map_publish_interval = config.param<double>("glim_ros", "map_publish_interval", 2.0);
   logger->info("RGB colorizer enabled: {}", rgb_colorizer_enabled);
   logger->info("Map downsample resolution: {}m (0 = disabled)", map_downsample_resolution);
   logger->info("Map publish interval: {}s", map_publish_interval);
@@ -85,210 +85,174 @@ void RvizViewer::save_map_pcd(const std::string& dump_path) {
 
   logger->info("Saving maps to directory: {}", base_dir);
 
-  // ===== 1. Save raw_map.pcd (accumulated raw point clouds, full resolution, with RGB) =====
-  // Uses optimized trajectory from traj_lidar.txt for world frame transformation
-  {
-    std::lock_guard<std::mutex> lock(raw_frames_mutex);
-    if (!raw_frames.empty()) {
-      // Load optimized trajectory
-      std::string traj_path = base_dir + "/traj_lidar.txt";
-      auto trajectory = load_trajectory(traj_path);
-
-      if (trajectory.empty()) {
-        logger->warn("No trajectory loaded, raw_map.pcd will not be saved");
-      } else {
-        pcl::PointCloud<pcl::PointXYZRGB> raw_cloud;
-
-        // Count total points
-        size_t total_points = 0;
-        for (const auto& frame : raw_frames) {
-          total_points += frame.points.size();
-        }
-        raw_cloud.reserve(total_points);
-
-        // Transform points using optimized trajectory
-        for (const auto& frame : raw_frames) {
-          // Get optimized pose for this frame's timestamp
-          Eigen::Isometry3d T_world_sensor = interpolate_pose(trajectory, frame.stamp);
-
-          for (size_t j = 0; j < frame.points.size(); j++) {
-            // Transform from sensor frame to world frame using optimized pose
-            Eigen::Vector4d p_world = T_world_sensor * frame.points[j];
-
-            pcl::PointXYZRGB pt;
-            pt.x = static_cast<float>(p_world.x());
-            pt.y = static_cast<float>(p_world.y());
-            pt.z = static_cast<float>(p_world.z());
-            // Add RGB colors if available
-            if (j < frame.colors.size()) {
-              uint32_t rgb = frame.colors[j];
-              pt.r = (rgb >> 16) & 0xFF;
-              pt.g = (rgb >> 8) & 0xFF;
-              pt.b = rgb & 0xFF;
-            } else {
-              // Default to white if no color available
-              pt.r = pt.g = pt.b = 255;
-            }
-            raw_cloud.push_back(pt);
-          }
-        }
-
-        std::string raw_path = base_dir + "/raw_map.pcd";
-        try {
-          pcl::io::savePCDFileBinary(raw_path, raw_cloud);
-          logger->info("Raw map saved: {} ({} points from {} frames, using optimized trajectory)", raw_path, raw_cloud.size(), raw_frames.size());
-        } catch (const std::exception& e) {
-          logger->error("Failed to save raw map: {}", e.what());
-        }
-      }
-    } else {
-      logger->warn("No raw frames to save for raw_map.pcd");
-    }
-  }
-
   if (rgb_colorizer_enabled) {
-    // For RGB mode: Use GLIM's submap points (already downsampled to ~0.08m) and find nearest RGB colors
-
-    // Load optimized trajectory
+    // Load optimized trajectory (shared for all saves)
     std::string traj_path = base_dir + "/traj_lidar.txt";
     auto trajectory = load_trajectory(traj_path);
 
     if (trajectory.empty()) {
-      logger->warn("No trajectory loaded, submap_map.pcd and downsampled_map.pcd will not be saved");
+      logger->warn("No trajectory loaded, PCD maps will not be saved");
     } else {
-      // ===== 2. Save submap_map.pcd (GLIM submap points with RGB colors from FOV data) =====
-      // Use GLIM's existing submap points (downsampled) and assign RGB colors from FOV data
-      pcl::PointCloud<pcl::PointXYZRGB> submap_cloud;
-
-      // First, collect all FOV points and colors in world frame for nearest neighbor search
-      std::vector<Eigen::Vector3f> fov_world_points;
-      std::vector<uint32_t> fov_colors;
-      size_t total_frames_with_fov = 0;
-
+      // ===== 1. Save raw_map.pcd (full resolution FOV points with RGB, from rgb_fov_data) =====
+      // Data source: rgb_fov_data stored in each odom_frame's custom_data (no memory duplication)
       {
-        std::lock_guard<std::mutex> lock(submap_refs_mutex);
-        logger->info("Collecting FOV data from {} submaps for color assignment...", submap_refs.size());
+        pcl::PointCloud<pcl::PointXYZRGB> raw_cloud;
 
-        for (const auto& submap : submap_refs) {
-          if (!submap || submap->odom_frames.empty()) continue;
-
-          for (const auto& odom_frame : submap->odom_frames) {
-            auto it = odom_frame->custom_data.find("rgb_fov_data");
-            if (it == odom_frame->custom_data.end() || !it->second) continue;
-
-            auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
-            if (!fov_data || fov_data->points.empty()) continue;
-
-            total_frames_with_fov++;
-
-            // Get optimized pose for this frame
-            Eigen::Isometry3d T_world_sensor = interpolate_pose(trajectory, odom_frame->stamp);
-
-            for (size_t i = 0; i < fov_data->points.size(); i++) {
-              Eigen::Vector4d p_world = T_world_sensor * fov_data->points[i];
-              fov_world_points.push_back(Eigen::Vector3f(p_world.x(), p_world.y(), p_world.z()));
-              fov_colors.push_back(i < fov_data->colors.size() ? fov_data->colors[i] : 0xFFFFFF);
-            }
-          }
-        }
-      }
-
-      logger->info("Collected {} FOV points from {} frames for color lookup", fov_world_points.size(), total_frames_with_fov);
-
-      // Build KD-tree for nearest neighbor search
-      pcl::PointCloud<pcl::PointXYZ>::Ptr fov_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-      fov_cloud->reserve(fov_world_points.size());
-      for (const auto& p : fov_world_points) {
-        fov_cloud->push_back(pcl::PointXYZ(p.x(), p.y(), p.z()));
-      }
-
-      pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
-      if (!fov_cloud->empty()) {
-        kdtree.setInputCloud(fov_cloud);
-      }
-
-      // Now assign colors to GLIM submap points
-      const float max_color_distance = 0.15f;  // Max distance to assign color (meters)
-      size_t colored_points = 0;
-      size_t uncolored_points = 0;
-
-      for (size_t i = 0; i < submaps.size(); i++) {
-        const auto& submap = submaps[i];
-        // Use optimized trajectory for submap pose
-        double submap_stamp = 0;
+        // Count total points and frames
+        size_t total_points = 0;
+        size_t total_frames = 0;
         {
           std::lock_guard<std::mutex> lock(submap_refs_mutex);
-          if (i < submap_refs.size() && submap_refs[i] && !submap_refs[i]->odom_frames.empty()) {
-            submap_stamp = (submap_refs[i]->odom_frames.front()->stamp + submap_refs[i]->odom_frames.back()->stamp) / 2.0;
+          for (const auto& submap : submap_refs) {
+            if (!submap || submap->odom_frames.empty()) continue;
+            for (const auto& odom_frame : submap->odom_frames) {
+              auto it = odom_frame->custom_data.find("rgb_fov_data");
+              if (it == odom_frame->custom_data.end() || !it->second) continue;
+              auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
+              if (fov_data && !fov_data->points.empty()) {
+                total_points += fov_data->points.size();
+                total_frames++;
+              }
+            }
           }
         }
-        Eigen::Isometry3d pose = submap_stamp > 0 ? interpolate_pose(trajectory, submap_stamp) : submap_poses[i];
+        raw_cloud.reserve(total_points);
 
-        for (int j = 0; j < submap->size(); j++) {
-          Eigen::Vector4d p_world = pose * submap->points[j];
+        // Transform points using optimized trajectory
+        {
+          std::lock_guard<std::mutex> lock(submap_refs_mutex);
+          for (const auto& submap : submap_refs) {
+            if (!submap || submap->odom_frames.empty()) continue;
+            for (const auto& odom_frame : submap->odom_frames) {
+              auto it = odom_frame->custom_data.find("rgb_fov_data");
+              if (it == odom_frame->custom_data.end() || !it->second) continue;
+              auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
+              if (!fov_data || fov_data->points.empty()) continue;
 
-          pcl::PointXYZRGB pt;
-          pt.x = static_cast<float>(p_world.x());
-          pt.y = static_cast<float>(p_world.y());
-          pt.z = static_cast<float>(p_world.z());
+              // Get optimized pose for this frame's timestamp
+              Eigen::Isometry3d T_world_sensor = interpolate_pose(trajectory, odom_frame->stamp);
 
-          // Find nearest FOV point for color
-          if (!fov_cloud->empty()) {
-            pcl::PointXYZ query_pt(pt.x, pt.y, pt.z);
-            std::vector<int> indices(1);
-            std::vector<float> distances(1);
-            if (kdtree.nearestKSearch(query_pt, 1, indices, distances) > 0 && distances[0] < max_color_distance * max_color_distance) {
-              uint32_t rgb = fov_colors[indices[0]];
-              pt.r = (rgb >> 16) & 0xFF;
-              pt.g = (rgb >> 8) & 0xFF;
-              pt.b = rgb & 0xFF;
-              colored_points++;
-            } else {
-              // No nearby FOV point - use gray
-              pt.r = pt.g = pt.b = 128;
-              uncolored_points++;
+              for (size_t j = 0; j < fov_data->points.size(); j++) {
+                // Transform from sensor frame to world frame using optimized pose
+                Eigen::Vector4d p_world = T_world_sensor * fov_data->points[j];
+
+                pcl::PointXYZRGB pt;
+                pt.x = static_cast<float>(p_world.x());
+                pt.y = static_cast<float>(p_world.y());
+                pt.z = static_cast<float>(p_world.z());
+                // Add RGB colors if available
+                if (j < fov_data->colors.size()) {
+                  uint32_t rgb = fov_data->colors[j];
+                  pt.r = (rgb >> 16) & 0xFF;
+                  pt.g = (rgb >> 8) & 0xFF;
+                  pt.b = rgb & 0xFF;
+                } else {
+                  // Default to white if no color available
+                  pt.r = pt.g = pt.b = 255;
+                }
+                raw_cloud.push_back(pt);
+              }
             }
-          } else {
-            pt.r = pt.g = pt.b = 128;
-            uncolored_points++;
           }
-          submap_cloud.push_back(pt);
+        }
+
+        if (!raw_cloud.empty()) {
+          std::string raw_path = base_dir + "/raw_map.pcd";
+          try {
+            pcl::io::savePCDFileBinary(raw_path, raw_cloud);
+            logger->info("Raw map saved: {} ({} points from {} frames, using optimized trajectory)", raw_path, raw_cloud.size(), total_frames);
+          } catch (const std::exception& e) {
+            logger->error("Failed to save raw map: {}", e.what());
+          }
+        } else {
+          logger->warn("No FOV points to save for raw_map.pcd");
         }
       }
 
-      logger->info("Color assignment: {} colored, {} gray (no FOV nearby)", colored_points, uncolored_points);
+      // ===== 2. Save submap_map.pcd (FOV points only, with voxel downsampling) =====
+      // Use FOV points directly (same as raw_map.pcd but with voxel downsampling for consistency)
+      {
+        pcl::PointCloud<pcl::PointXYZRGB> submap_cloud;
+        size_t total_frames_with_fov = 0;
 
-      if (!submap_cloud.empty()) {
-        std::string submap_path = base_dir + "/submap_map.pcd";
-        try {
-          pcl::io::savePCDFileBinary(submap_path, submap_cloud);
-          logger->info("Submap map saved: {} ({} points from {} submaps, GLIM resolution with RGB)", submap_path, submap_cloud.size(), submaps.size());
-        } catch (const std::exception& e) {
-          logger->error("Failed to save submap map: {}", e.what());
+        {
+          std::lock_guard<std::mutex> lock(submap_refs_mutex);
+          logger->info("Collecting FOV data from {} submaps for submap_map.pcd...", submap_refs.size());
+
+          for (const auto& submap : submap_refs) {
+            if (!submap || submap->odom_frames.empty()) continue;
+
+            for (const auto& odom_frame : submap->odom_frames) {
+              auto it = odom_frame->custom_data.find("rgb_fov_data");
+              if (it == odom_frame->custom_data.end() || !it->second) continue;
+
+              auto fov_data = std::static_pointer_cast<FrameRGBFovData>(it->second);
+              if (!fov_data || fov_data->points.empty()) continue;
+
+              total_frames_with_fov++;
+
+              // Get optimized pose for this frame
+              Eigen::Isometry3d T_world_sensor = interpolate_pose(trajectory, odom_frame->stamp);
+
+              for (size_t i = 0; i < fov_data->points.size(); i++) {
+                Eigen::Vector4d p_world = T_world_sensor * fov_data->points[i];
+                pcl::PointXYZRGB pt;
+                pt.x = static_cast<float>(p_world.x());
+                pt.y = static_cast<float>(p_world.y());
+                pt.z = static_cast<float>(p_world.z());
+
+                uint32_t rgb = i < fov_data->colors.size() ? fov_data->colors[i] : 0xFFFFFF;
+                pt.r = (rgb >> 16) & 0xFF;
+                pt.g = (rgb >> 8) & 0xFF;
+                pt.b = rgb & 0xFF;
+
+                submap_cloud.push_back(pt);
+              }
+            }
+          }
         }
 
-        // ===== 3. Save downsampled_map.pcd (voxel filtered from submap_map) =====
-        if (map_downsample_resolution > 0) {
-          const float res = static_cast<float>(map_downsample_resolution);
-          pcl::PointCloud<pcl::PointXYZRGB> downsampled_cloud;
+        logger->info("Collected {} FOV points from {} frames", submap_cloud.size(), total_frames_with_fov);
+
+        // Apply voxel downsampling (0.08m like GLIM submap resolution)
+        if (!submap_cloud.empty()) {
+          const float submap_voxel_res = 0.08f;
+          pcl::PointCloud<pcl::PointXYZRGB> voxelized_cloud;
           pcl::VoxelGrid<pcl::PointXYZRGB> voxel_filter;
           voxel_filter.setInputCloud(submap_cloud.makeShared());
-          voxel_filter.setLeafSize(res, res, res);
-          voxel_filter.filter(downsampled_cloud);
+          voxel_filter.setLeafSize(submap_voxel_res, submap_voxel_res, submap_voxel_res);
+          voxel_filter.filter(voxelized_cloud);
 
-          std::string downsampled_path = base_dir + "/downsampled_map.pcd";
+          std::string submap_path = base_dir + "/submap_map.pcd";
           try {
-            pcl::io::savePCDFileBinary(downsampled_path, downsampled_cloud);
-            logger->info("Downsampled map saved: {} ({} points, voxel={}m)", downsampled_path, downsampled_cloud.size(), map_downsample_resolution);
+            pcl::io::savePCDFileBinary(submap_path, voxelized_cloud);
+            logger->info("Submap map saved: {} ({} points from {} frames, voxel={}m)", submap_path, voxelized_cloud.size(), total_frames_with_fov, submap_voxel_res);
           } catch (const std::exception& e) {
-            logger->error("Failed to save downsampled map: {}", e.what());
+            logger->error("Failed to save submap map: {}", e.what());
           }
+
+          // ===== 3. Save downsampled_map.pcd (further voxel filtered) =====
+          if (map_downsample_resolution > 0 && map_downsample_resolution > submap_voxel_res) {
+            const float res = static_cast<float>(map_downsample_resolution);
+            pcl::PointCloud<pcl::PointXYZRGB> downsampled_cloud;
+            pcl::VoxelGrid<pcl::PointXYZRGB> downsample_filter;
+            downsample_filter.setInputCloud(voxelized_cloud.makeShared());
+            downsample_filter.setLeafSize(res, res, res);
+            downsample_filter.filter(downsampled_cloud);
+
+            std::string downsampled_path = base_dir + "/downsampled_map.pcd";
+            try {
+              pcl::io::savePCDFileBinary(downsampled_path, downsampled_cloud);
+              logger->info("Downsampled map saved: {} ({} points, voxel={}m)", downsampled_path, downsampled_cloud.size(), map_downsample_resolution);
+            } catch (const std::exception& e) {
+              logger->error("Failed to save downsampled map: {}", e.what());
+            }
+          }
+        } else {
+          logger->warn("No FOV points to save for submap_map.pcd");
         }
-      } else {
-        logger->warn("No submap points to save");
       }
     }
-
   } else {
     // Non-RGB mode: save XYZ only maps
 
@@ -543,7 +507,7 @@ void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, 
   }
 
   // Publish path (simple accumulation of poses)
-  if (!corrected && path_pub->get_subscription_count()) {
+  if (!corrected) {
     geometry_msgs::msg::PoseStamped pose;
     pose.header.stamp = stamp;
     pose.header.frame_id = map_frame_id;
@@ -563,7 +527,7 @@ void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, 
   // ~/points publishing:
   // - If rgb_colorizer_enabled: handled by RGBColorizerCallbacks::on_frame_colorized
   // - If not enabled: publish non-colorized points directly here
-  if (!rgb_colorizer_enabled && !corrected && points_pub->get_subscription_count()) {
+  if (!rgb_colorizer_enabled && !corrected) {
     publish_non_colorized_points(new_frame);
   }
 
@@ -596,17 +560,10 @@ void RvizViewer::publish_colored_points(const ColorizedPointCloud& colorized) {
     return;
   }
 
-  // Accumulate raw FOV points for raw_map.pcd (sensor frame with timestamp for later reprojection)
-  {
-    std::lock_guard<std::mutex> lock(raw_frames_mutex);
-    RawFrame raw_frame;
-    raw_frame.stamp = colorized.stamp;
-    raw_frame.points = colorized.points;  // Store in sensor frame (NOT world frame)
-    raw_frame.colors = colorized.colors;
-    raw_frames.push_back(std::move(raw_frame));
-  }
+  // Note: FOV data is already stored in frame's custom_data["rgb_fov_data"] by rgb_colorizer_ros
+  // No need to duplicate here - raw_map.pcd will be generated from rgb_fov_data in save_map_pcd()
 
-  if (!points_pub || points_pub->get_subscription_count() == 0) {
+  if (!points_pub) {
     return;
   }
 

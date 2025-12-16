@@ -343,8 +343,10 @@ void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::Sh
     sum_total_ms += total_ms;
 
     if (image_count % 100 == 0) {
-      logger->info("[TIMING] image_callback avg: decode={:.2f}ms, resize={:.2f}ms, undist={:.2f}ms, total={:.2f}ms",
-        sum_decode_ms / 100, sum_resize_ms / 100, sum_undist_ms / 100, sum_total_ms / 100);
+      // Note: when image_resize_scale < 1.0, resize is done during decode (IMREAD_REDUCED)
+      // so decode time includes resize, and separate resize time is 0
+      logger->debug("[TIMING] image_callback avg: decode={:.2f}ms (scale={:.2f}), undist={:.2f}ms, total={:.2f}ms",
+        sum_decode_ms / 100, image_resize_scale, sum_undist_ms / 100, sum_total_ms / 100);
       sum_decode_ms = sum_resize_ms = sum_undist_ms = sum_total_ms = 0;
     }
   } catch (const std::exception& e) {
@@ -392,11 +394,11 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
     if (frames_no_image_match % 100 == 0) {
       std::lock_guard<std::mutex> lock(image_buffer_mutex);
       if (!image_buffer.empty()) {
-        logger->warn("no matching image: frame_stamp={}, buffer=[{}, {}], stats: received={}, no_match={}, processed={}",
+        logger->warn("no matching image: frame_stamp={}, buffer=[{}, {}], stats: lidar_frames={}, no_image_match={}, colorized={}",
           frame->stamp, image_buffer.front().first, image_buffer.back().first,
           total_frames_received, frames_no_image_match, frames_processed);
       } else {
-        logger->warn("no matching image (buffer empty): received={}, no_match={}, processed={}",
+        logger->warn("no matching image (buffer empty): lidar_frames={}, no_image_match={}, colorized={}",
           total_frames_received, frames_no_image_match, frames_processed);
       }
     }
@@ -425,9 +427,9 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
     mutable_custom_data["rgb_fov_data"] = fov_data;
   }
 
-  // Log statistics every 1000 frames
+  // Log statistics every 1000 frames (debug level)
   if (total_frames_received % 1000 == 0) {
-    logger->info("RGB colorizer stats (SYNC): received={}, processed={}, no_match={}",
+    logger->debug("RGB colorizer stats (SYNC): lidar_frames={}, colorized={}, no_image_match={}",
       total_frames_received, frames_processed, frames_no_image_match);
   }
 }
@@ -478,7 +480,7 @@ std::shared_ptr<FrameRGBFovData> RGBColorizerROS::process_colorization_sync(cons
   sum_total_ms += total_ms;
 
   if (frame_count % 100 == 0) {
-    logger->info("[TIMING] colorization avg: colorize={:.2f}ms, total={:.2f}ms (points={})",
+    logger->debug("[TIMING] colorization avg: colorize={:.2f}ms, total={:.2f}ms (points={})",
       sum_colorize_ms / 100, sum_total_ms / 100, raw_points.size());
     sum_colorize_ms = sum_total_ms = 0;
   }

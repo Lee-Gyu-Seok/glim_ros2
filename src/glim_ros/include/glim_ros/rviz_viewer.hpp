@@ -126,16 +126,6 @@ private:
   std::vector<FovSubmap> fov_submaps;  // FOV-only submap list
   bool fov_submaps_updated;
 
-  // Raw point cloud accumulation (full resolution, no submap downsampling)
-  // Points stored in sensor frame with timestamp for later reprojection using optimized trajectory
-  struct RawFrame {
-    double stamp;                         // Timestamp for trajectory lookup
-    std::vector<Eigen::Vector4d> points;  // Points in sensor frame (NOT world frame)
-    std::vector<uint32_t> colors;         // RGB colors (if available)
-  };
-  std::mutex raw_frames_mutex;
-  std::vector<RawFrame> raw_frames;  // Accumulated raw frames
-
   // Trajectory loading for optimized reprojection
   std::map<double, Eigen::Isometry3d> load_trajectory(const std::string& traj_file);
   Eigen::Isometry3d interpolate_pose(const std::map<double, Eigen::Isometry3d>& traj, double stamp);

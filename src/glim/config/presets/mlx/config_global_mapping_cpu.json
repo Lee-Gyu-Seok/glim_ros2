@@ -10,7 +10,7 @@
     "between_registration_type": "NONE",
     "registration_error_factor_type": "VGICP",
     "randomsampling_rate": 1.0,
-    "submap_voxel_resolution": 0.08,
+    "submap_voxel_resolution": 0.1,
     "submap_voxelmap_levels": 4,
     "submap_voxelmap_scaling_factor": 2.0,
     // More aggressive implicit loop detection for better accuracy
@@ -19,7 +19,7 @@
     // Use Gauss-Newton solver (like original glim)
     "use_isam2_dogleg": false,
     // More frequent relinearization for accuracy
-    "isam2_relinearize_skip": 1,
+    "isam2_relinearize_skip": 2,
     "isam2_relinearize_thresh": 0.05
   }
 }
