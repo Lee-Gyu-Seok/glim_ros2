@@ -18,7 +18,8 @@
   "sensors": {
     // IMU config
     "imu_acc_noise": 0.5,
-    "imu_gyro_noise": 0.3,
+    // # past: "imu_gyro_noise": 0.3,
+    "imu_gyro_noise": 0.5,  // Angular velocity error 높음 (0.0975 rad/s) → 노이즈 파라미터 증가
     "imu_int_noise": 0.001,
     "imu_bias_noise": 0.001,
     // LiDAR config

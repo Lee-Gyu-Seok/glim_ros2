@@ -30,6 +30,11 @@ struct ValidationStats {
   double max_angular_vel_error = 0.0;
   double min_angular_vel_error = std::numeric_limits<double>::max();
 
+  // Per-axis angular velocity error (LiDAR - IMU)
+  Eigen::Vector3d avg_angular_vel_error_xyz = Eigen::Vector3d::Zero();
+  Eigen::Vector3d avg_angular_vel_lidar = Eigen::Vector3d::Zero();
+  Eigen::Vector3d avg_angular_vel_imu = Eigen::Vector3d::Zero();
+
   // Gravity alignment error statistics
   double avg_gravity_error = 0.0;
   double max_gravity_error = 0.0;
@@ -223,6 +228,10 @@ private:
     std::vector<double> angular_vel_errors;
     std::vector<double> gravity_errors;
 
+    std::vector<Eigen::Vector3d> angular_vel_errors_xyz;
+    std::vector<Eigen::Vector3d> angular_vel_lidar_samples;
+    std::vector<Eigen::Vector3d> angular_vel_imu_samples;
+
     for (size_t i = 0; i < frame_window.size(); i++) {
       const auto& frame = frame_window[i];
       const auto& imu = imu_window[imu_cursors[i]];
@@ -231,6 +240,12 @@ private:
       Eigen::Vector3d imu_angular_vel = imu.middleRows<3>(4);
       double w_error = (angular_vel_lidar[i] - imu_angular_vel).norm();
       angular_vel_errors.push_back(w_error);
+
+      // Per-axis error (signed, to see direction)
+      Eigen::Vector3d w_error_xyz = angular_vel_lidar[i] - imu_angular_vel;
+      angular_vel_errors_xyz.push_back(w_error_xyz);
+      angular_vel_lidar_samples.push_back(angular_vel_lidar[i]);
+      angular_vel_imu_samples.push_back(imu_angular_vel);
 
       // Gravity alignment error (how well IMU z-axis aligns with gravity)
       Eigen::Vector3d acc_world = frame->T_world_imu.linear() * imu.middleRows<3>(1);
@@ -246,6 +261,15 @@ private:
     }
     for (double e : gravity_errors) {
       cumulative_gravity_errors.push_back(e);
+    }
+    for (const auto& e : angular_vel_errors_xyz) {
+      cumulative_angular_vel_errors_xyz.push_back(e);
+    }
+    for (const auto& v : angular_vel_lidar_samples) {
+      cumulative_angular_vel_lidar.push_back(v);
+    }
+    for (const auto& v : angular_vel_imu_samples) {
+      cumulative_angular_vel_imu.push_back(v);
     }
     imu_t_offset_samples.push_back(best_imu_t_offset);
     nid_samples.push_back(best_nid);
@@ -266,6 +290,12 @@ private:
     logger->info("Samples: {}", stats.sample_count);
     logger->info("Angular velocity error (rad/s): avg={:.4f}, min={:.4f}, max={:.4f}",
                  stats.avg_angular_vel_error, stats.min_angular_vel_error, stats.max_angular_vel_error);
+    logger->info("Per-axis error (LiDAR-IMU): X={:.4f}, Y={:.4f}, Z={:.4f} rad/s",
+                 stats.avg_angular_vel_error_xyz.x(), stats.avg_angular_vel_error_xyz.y(), stats.avg_angular_vel_error_xyz.z());
+    logger->info("Avg angular vel LiDAR: X={:.4f}, Y={:.4f}, Z={:.4f} rad/s",
+                 stats.avg_angular_vel_lidar.x(), stats.avg_angular_vel_lidar.y(), stats.avg_angular_vel_lidar.z());
+    logger->info("Avg angular vel IMU:   X={:.4f}, Y={:.4f}, Z={:.4f} rad/s",
+                 stats.avg_angular_vel_imu.x(), stats.avg_angular_vel_imu.y(), stats.avg_angular_vel_imu.z());
     logger->info("Gravity alignment error: avg={:.4f}, min={:.4f}, max={:.4f}",
                  stats.avg_gravity_error, stats.min_gravity_error, stats.max_gravity_error);
     logger->info("Estimated IMU time offset: {:.3f} sec", stats.estimated_imu_t_offset);
@@ -297,6 +327,21 @@ private:
                                                      cumulative_angular_vel_errors.end());
     stats.max_angular_vel_error = *std::max_element(cumulative_angular_vel_errors.begin(),
                                                      cumulative_angular_vel_errors.end());
+
+    // Per-axis angular velocity statistics
+    if (!cumulative_angular_vel_errors_xyz.empty()) {
+      Eigen::Vector3d sum_error = Eigen::Vector3d::Zero();
+      Eigen::Vector3d sum_lidar = Eigen::Vector3d::Zero();
+      Eigen::Vector3d sum_imu = Eigen::Vector3d::Zero();
+      for (size_t i = 0; i < cumulative_angular_vel_errors_xyz.size(); i++) {
+        sum_error += cumulative_angular_vel_errors_xyz[i];
+        sum_lidar += cumulative_angular_vel_lidar[i];
+        sum_imu += cumulative_angular_vel_imu[i];
+      }
+      stats.avg_angular_vel_error_xyz = sum_error / cumulative_angular_vel_errors_xyz.size();
+      stats.avg_angular_vel_lidar = sum_lidar / cumulative_angular_vel_lidar.size();
+      stats.avg_angular_vel_imu = sum_imu / cumulative_angular_vel_imu.size();
+    }
 
     // Gravity errors
     stats.avg_gravity_error = std::accumulate(cumulative_gravity_errors.begin(),
@@ -407,6 +452,9 @@ private:
   std::mutex stats_mutex;
   std::vector<double> cumulative_angular_vel_errors;
   std::vector<double> cumulative_gravity_errors;
+  std::vector<Eigen::Vector3d> cumulative_angular_vel_errors_xyz;
+  std::vector<Eigen::Vector3d> cumulative_angular_vel_lidar;
+  std::vector<Eigen::Vector3d> cumulative_angular_vel_imu;
   std::vector<double> imu_t_offset_samples;
   std::vector<double> nid_samples;
 

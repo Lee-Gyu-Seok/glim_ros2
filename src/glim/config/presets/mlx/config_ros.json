@@ -7,7 +7,8 @@
     // Points config
     "keep_raw_points": true, // RGB colorizer에서 원본 포인트 사용 (다운샘플링 없음)
     // IMU config
-    "imu_time_offset": 0.0,
+    // # past: "imu_time_offset": 0.0,
+    "imu_time_offset": -0.012,  // IMU validator 분석 결과 적용 (IMU 데이터가 LiDAR보다 12ms 빠름)
     "points_time_offset": 0.0,
     "acc_scale": 1.0,
     // TF config

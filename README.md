@@ -289,6 +289,59 @@ config/presets/mlx/
                     └─────────────────────────────────────────┘
 ```
 
+### 핵심 모듈 설명
+
+#### 1. Odometry Estimation (오도메트리)
+LiDAR 포인트클라우드와 IMU 데이터를 융합하여 실시간 자세 추정을 수행합니다.
+
+- 설정 파일: `config_odometry_cpu.json`
+- 현재 설정:
+  - **Registration**: SmallGICP (경량 GICP)
+  - **IMU 융합**: 가속도계/자이로스코프 데이터로 포인트클라우드 deskewing 및 초기 자세 추정
+  - **최적화**: iSAM2 기반 슬라이딩 윈도우 최적화
+
+```json
+{
+  "registration_type": "SmallGICP",
+  "smoother_lag": 10.0,
+  "max_iterations": 10
+}
+```
+
+#### 2. Sub Mapping (서브맵 생성)
+연속된 키프레임들을 묶어 서브맵을 생성합니다.
+
+- 설정 파일: `config_sub_mapping_cpu.json`
+- 현재 설정:
+  - **키프레임 전략**: 이동 거리 기반 (0.5m 이동 또는 0.5rad 회전)
+  - **서브맵 크기**: 최대 15개 키프레임
+  - **다운샘플링**: 0.08m 복셀 해상도
+
+```json
+{
+  "max_num_keyframes": 15,
+  "keyframe_update_interval_trans": 0.5,
+  "submap_downsample_resolution": 0.08
+}
+```
+
+#### 3. Global Mapping (전역 최적화)
+서브맵 간 관계를 최적화하고 루프 클로저를 적용합니다.
+
+- 설정 파일: `config_global_mapping_cpu.json`
+- 현재 설정:
+  - **IMU 사용**: 비활성화 (IndeterminantLinearSystemException 방지)
+  - **Between Factor**: 비활성화
+  - **Implicit Loop**: 100m 이내 서브맵 간 자동 루프 검출
+
+```json
+{
+  "enable_imu": false,
+  "create_between_factors": false,
+  "max_implicit_loop_distance": 100.0
+}
+```
+
 ### 확장 모듈 (Extension Modules)
 
 `config_ros.json`에서 확장 모듈을 활성화/비활성화할 수 있습니다:
@@ -299,12 +352,24 @@ config/presets/mlx/
 ```
 - 역할: ScanContext 기반 루프 클로저 검출
 - 설정: `config_scan_context.json`
-- 루프 폐합 시 drift 보정에 필수적
+- 현재 설정:
+  - **센서 높이**: 0.82m (지면 추정용)
+  - **검색 범위**: 30m, FOV 120°
+  - **매칭 임계값**: 0.30 (낮을수록 엄격)
+  - **Odometry 기반 지면 추정**: 활성화 (핸드헬드 시나리오용)
+
+```json
+{
+  "lidar_height": 0.82,
+  "sc_dist_threshold": 0.30,
+  "use_odometry_ground": true
+}
+```
 
 #### 2. RGB Colorizer
 ```json
 "rgb_colorizer_enabled": true,
-"rgb_image_topic": "/camera/image/compressed"
+"rgb_image_topic": "/spadi/rgb_image/image_raw/compressed"
 ```
 - 역할: 카메라 이미지를 이용한 포인트 클라우드 컬러화
 - 설정: `config_sensors.json`의 카메라 파라미터
@@ -312,7 +377,7 @@ config/presets/mlx/
   - 카메라 FOV 내 포인트만 RGB 색상 적용
   - Motion compensation (LiDAR-Camera 시간차 보정)
   - Z-buffer 기반 가려짐 처리
-  - 종료 시 `global_map_rgb_fov.pcd` 자동 저장
+  - 종료 시 서브맵별 RGB 포인트 저장
 
 #### 3. Gravity Estimator
 ```json
@@ -321,6 +386,25 @@ config/presets/mlx/
 - 역할: IMU 데이터 기반 중력 방향 추정
 - 설정: `config_gravity_estimator.json`
 - 초기화 시 수평 정렬에 사용
+
+#### 4. IMU Validator (Headless)
+```json
+"extension_modules": ["libimu_validator_headless.so"]
+```
+- 역할: IMU-LiDAR 캘리브레이션 품질 검증
+- 출력 항목:
+  - 각속도 오차 (LiDAR 오도메트리 vs IMU 자이로스코프)
+  - 축별 오차 (X, Y, Z) - 좌표계 정렬 확인용
+  - 중력 정렬 오차
+  - IMU 시간 오프셋 추정값
+  - NID 점수 (0.5 미만이 양호)
+
+#### 5. Memory Monitor
+```json
+"extension_modules": ["libmemory_monitor.so"]
+```
+- 역할: 메모리 사용량 모니터링
+- 로그에 주기적으로 메모리 사용량 출력
 
 ### Odometry Registration 타입
 
@@ -364,6 +448,51 @@ GPU 버전 (`config_odometry_gpu.json`)은 VGICP-GPU만 지원합니다.
   }
 }
 ```
+
+### IMU 시간 오프셋 캘리브레이션
+
+IMU와 LiDAR 센서는 각각 독립적인 클럭을 사용하며, 드라이버 처리 지연 등으로 인해 타임스탬프 간 오프셋이 발생할 수 있습니다. 이 오프셋은 **실행하여 측정**해야 합니다.
+
+#### 측정 방법
+
+1. `config_ros.json`의 `extension_modules`에 `libimu_validator_headless.so` 추가
+2. rosbag 재생 또는 실시간 데이터 수집
+3. 로그에서 `Estimated IMU time offset` 값 확인
+
+```
+[imu_valid] [info] Estimated IMU time offset: -0.012 sec
+```
+
+4. `config_ros.json`에 측정된 값 적용:
+
+```json
+{
+  "glim_ros": {
+    "imu_time_offset": -0.012  // 음수 = IMU가 LiDAR보다 빠름
+  }
+}
+```
+
+#### 원리
+
+- IMU Validator는 LiDAR 오도메트리 각속도와 IMU 자이로스코프 각속도의 **상호상관(cross-correlation)**을 분석
+- 두 신호의 상관관계가 최대가 되는 시간차가 오프셋 값
+- 같은 센서 조합에서는 오프셋이 거의 일정하므로, 한번 측정 후 재사용 가능
+
+#### IMU 노이즈 파라미터
+
+`config_sensors.json`에서 IMU 노이즈 특성을 설정합니다:
+
+```json
+{
+  "sensors": {
+    "imu_acc_noise": 0.5,    // 가속도계 노이즈 (m/s²)
+    "imu_gyro_noise": 0.5    // 자이로스코프 노이즈 (rad/s)
+  }
+}
+```
+
+IMU Validator의 `Angular velocity error`가 높으면 (> 0.05 rad/s) `imu_gyro_noise` 값을 높여야 합니다.
 
 ### 프로파일링 통계
 
@@ -412,11 +541,45 @@ print(f"Orientation error: {angle_error_deg:.2f} degrees")
 
 프로그램 종료 시 `glim_ros/Log/map_YYYYMMDD_HHMMSS/` 폴더에 저장:
 
-| 파일/폴더 | 설명 |
-|-----------|------|
-| `traj_lidar.txt` | 최적화된 LiDAR 궤적 (TUM format) |
-| `odom_lidar.txt` | 루프 클로저 미적용 Odometry 궤적 |
-| `profiling_stats.txt` | 연산 시간 통계 |
-| `global_map_rgb_fov.pcd` | RGB 색상이 입혀진 FOV 포인트 맵 |
-| `XXXXXX/` | 각 서브맵 데이터 (point clouds, poses) |
-| `config/` | 사용된 설정 파일 백업 |
+#### 궤적 파일 (TUM format)
+
+| 파일 | 설명 |
+|------|------|
+| `traj_lidar.txt` | 최적화된 LiDAR 궤적 (루프 클로저 적용) |
+| `traj_imu.txt` | 최적화된 IMU 궤적 |
+| `odom_lidar.txt` | Odometry 궤적 (루프 클로저 미적용) |
+| `odom_imu.txt` | Odometry IMU 궤적 |
+
+#### 포인트클라우드 맵
+
+| 파일 | 설명 |
+|------|------|
+| `raw_map.pcd` | 전체 원본 포인트 맵 (대용량) |
+| `submap_map.pcd` | 서브맵 기반 포인트 맵 |
+| `downsampled_map.pcd` | 다운샘플링된 맵 (`map_downsample_resolution` 적용) |
+
+#### 그래프 및 최적화
+
+| 파일 | 설명 |
+|------|------|
+| `graph.txt` | 팩터 그래프 메타데이터 (서브맵 수, 프레임 수) |
+| `graph.bin` | 팩터 그래프 바이너리 데이터 |
+| `values.bin` | GTSAM 최적화 결과 (포즈, 속도, IMU 바이어스) |
+| `profiling_stats.txt` | 모듈별 연산 시간 통계 |
+
+#### 서브맵 폴더 (`000000/`, `000001/`, ...)
+
+각 서브맵 폴더에는 다음 파일이 저장됩니다:
+
+| 파일 | 설명 |
+|------|------|
+| `data.txt` | 서브맵 메타데이터 및 키프레임 정보 |
+| `points_compact.bin` | 서브맵 포인트클라우드 (바이너리) |
+| `covs_compact.bin` | 포인트별 공분산 매트릭스 |
+| `imu_rate.txt` | IMU 레이트 궤적 (고주파) |
+
+#### 설정 백업
+
+| 폴더 | 설명 |
+|------|------|
+| `config/` | 실행 시 사용된 모든 설정 파일 복사본 |
