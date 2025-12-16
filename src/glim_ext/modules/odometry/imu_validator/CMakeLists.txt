@@ -6,6 +6,7 @@ find_package(GTSAM REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Iridescence REQUIRED)
 
+# Original GUI-based IMU validator (requires Iridescence/ImPlot)
 add_library(imu_validator SHARED
   src/glim_ext/imu_validator.cpp
 )
@@ -23,5 +24,24 @@ target_link_libraries(imu_validator
   ${Iridescence_LIBRARIES}
 )
 target_compile_options(imu_validator PRIVATE
+  -std=c++17
+)
+
+# Headless IMU validator (no GUI required, outputs to log)
+add_library(imu_validator_headless SHARED
+  src/glim_ext/imu_validator_headless.cpp
+)
+target_include_directories(imu_validator_headless PRIVATE
+  include
+  ${EIGEN3_INCLUDE_DIRS}
+  ${GTSAM_INCLUDE_DIRS}
+  ${glim_INCLUDE_DIRS}
+  ${glim_ext_INCLUDE_DIRS}
+)
+target_link_libraries(imu_validator_headless
+  ${glim_LIBRARIES}
+  ${glim_ext_LIBRARIES}
+)
+target_compile_options(imu_validator_headless PRIVATE
   -std=c++17
 )

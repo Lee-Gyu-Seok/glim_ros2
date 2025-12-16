@@ -30,6 +30,7 @@ RvizViewer::RvizViewer() : logger(create_module_logger("rviz")), fov_submaps_upd
 
   imu_frame_id = config.param<std::string>("glim_ros", "imu_frame_id", "imu");
   lidar_frame_id = config.param<std::string>("glim_ros", "lidar_frame_id", "lidar");
+  camera_frame_id = config.param<std::string>("glim_ros", "camera_frame_id", "camera");
   base_frame_id = config.param<std::string>("glim_ros", "base_frame_id", "");
   if (base_frame_id.empty()) {
     base_frame_id = imu_frame_id;
@@ -38,7 +39,23 @@ RvizViewer::RvizViewer() : logger(create_module_logger("rviz")), fov_submaps_upd
   odom_frame_id = config.param<std::string>("glim_ros", "odom_frame_id", "odom");
   map_frame_id = config.param<std::string>("glim_ros", "map_frame_id", "map");
   publish_imu2lidar = config.param<bool>("glim_ros", "publish_imu2lidar", true);
+  publish_lidar2camera = config.param<bool>("glim_ros", "publish_lidar2camera", true);
   tf_time_offset = config.param<double>("glim_ros", "tf_time_offset", 1e-6);
+
+  // Load T_lidar_camera from config_sensors.json
+  T_lidar_camera = Eigen::Isometry3d::Identity();
+  const Config sensors_config(GlobalConfig::get_config_path("config_sensors"));
+  auto T_lidar_camera_vec = sensors_config.param<std::vector<double>>("sensors", "T_lidar_camera", std::vector<double>());
+  if (T_lidar_camera_vec.size() == 7) {
+    Eigen::Quaterniond q(T_lidar_camera_vec[6], T_lidar_camera_vec[3], T_lidar_camera_vec[4], T_lidar_camera_vec[5]);
+    T_lidar_camera.linear() = q.normalized().toRotationMatrix();
+    T_lidar_camera.translation() = Eigen::Vector3d(T_lidar_camera_vec[0], T_lidar_camera_vec[1], T_lidar_camera_vec[2]);
+    logger->info("T_lidar_camera loaded: t=[{:.4f}, {:.4f}, {:.4f}]",
+                 T_lidar_camera_vec[0], T_lidar_camera_vec[1], T_lidar_camera_vec[2]);
+  } else {
+    publish_lidar2camera = false;
+    logger->warn("T_lidar_camera not found or invalid in config_sensors.json, disabling lidar->camera TF");
+  }
 
   // RGB colorizer integration
   rgb_colorizer_enabled = config.param<bool>("glim_ros", "rgb_colorizer_enabled", false);
@@ -461,6 +478,21 @@ void RvizViewer::odometry_new_frame(const EstimationFrame::ConstPtr& new_frame, 
       trans.transform.rotation.y = quat_lidar_imu.y();
       trans.transform.rotation.z = quat_lidar_imu.z();
       trans.transform.rotation.w = quat_lidar_imu.w();
+      tf_broadcaster->sendTransform(trans);
+    }
+
+    // LiDAR -> Camera
+    if (publish_lidar2camera) {
+      const Eigen::Quaterniond quat_lidar_camera(T_lidar_camera.linear());
+      trans.header.frame_id = lidar_frame_id;
+      trans.child_frame_id = camera_frame_id;
+      trans.transform.translation.x = T_lidar_camera.translation().x();
+      trans.transform.translation.y = T_lidar_camera.translation().y();
+      trans.transform.translation.z = T_lidar_camera.translation().z();
+      trans.transform.rotation.x = quat_lidar_camera.x();
+      trans.transform.rotation.y = quat_lidar_camera.y();
+      trans.transform.rotation.z = quat_lidar_camera.z();
+      trans.transform.rotation.w = quat_lidar_camera.w();
       tf_broadcaster->sendTransform(trans);
     }
   }

@@ -13,10 +13,12 @@
     // TF config
     "imu_frame_id": "imu",
     "lidar_frame_id": "/spadi/lidar",
+    "camera_frame_id": "/spadi/camera",
     "base_frame_id": "",
     "odom_frame_id": "odom",
     "map_frame_id": "map",
     "publish_imu2lidar": true,
+    "publish_lidar2camera": true,
     "tf_time_offset": 1e-6,
     // Extension modules
     "extension_modules": [
@@ -25,7 +27,8 @@
       "librgb_colorizer_ros.so",  // RGB colorizer (must be before rviz_viewer)
       "librviz_viewer.so",
       "libscan_context_loop_detector.so",
-      "libgravity_estimator.so"
+      "libgravity_estimator.so",
+      "libimu_validator_headless.so"  // IMU calibration validator (headless, logs to console)
     ],
     // Topics for MLX
     "imu_topic": "/spadi/imu",

@@ -12,7 +12,7 @@
   },
 
   // T_lidar_imu format: [x, y, z, qx, qy, qz, qw] (TUM format)
-  // Given extrinsic_T: [-0.052, -0.083, -0.018] (IMU -> LiDAR translation)
+  // Given extrinsic_T: [-0.086, 0.062, -0.015] (IMU -> LiDAR translation)
   // Given extrinsic_R: Identity matrix (no rotation)
   // T_lidar_imu is the inverse: LiDAR -> IMU, so translation is negated
   "sensors": {
@@ -23,10 +23,11 @@
     "imu_bias_noise": 0.001,
     // LiDAR config
     "global_shutter_lidar": false,
+    // # past spadi: "T_lidar_imu": [0.052, 0.083, 0.018, 0.0, 0.0, 0.0, 1.0],
     "T_lidar_imu": [
-      0.052,
-      0.083,
-      0.018,
+      0.086,
+      -0.062,
+      0.015,
       0.0,
       0.0,
       0.0,
@@ -43,9 +44,12 @@
     // Camera config for RGB colorization
     "global_shutter_camera": true,
     "image_size": [1920, 1200],
-    "T_lidar_camera": [0.11208, -0.03075, -0.00991, 0.50809, -0.50212, 0.49961, 0.49001],
-    "intrinsics": [1178.14959, 1182.06921, 970.00208, 601.90079],
+    // # past spadi: "T_lidar_camera": [0.11208, -0.03075, -0.00991, 0.50809, -0.50212, 0.49961, 0.49001],
+    "T_lidar_camera": [0.041461310225722275, -0.006154354384287106, -0.007143427717059438, 0.5035784765834423, -0.4960047911383731, 0.4971726173604331, 0.5031971319837333],
+    // # past spadi: "intrinsics": [1178.14959, 1182.06921, 970.00208, 601.90079],
+    "intrinsics": [1180.9734547778685, 1189.477655584683, 949.7758750493107, 594.3388853461529],
     "distortion_model": "plumb_bob",
-    "distortion_coeffs": [-0.21612, 0.05788, -0.00017, 0.00053, 0.0]
+    // # past spadi: "distortion_coeffs": [-0.21612, 0.05788, -0.00017, 0.00053, 0.0]
+    "distortion_coeffs": [-0.21955777321553152, 0.0781830442318065, 0.0036719587166633674, -0.0024038116994094237, 0.0]
   }
 }

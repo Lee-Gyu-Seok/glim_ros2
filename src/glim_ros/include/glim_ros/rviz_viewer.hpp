@@ -77,10 +77,13 @@ private:
 
   std::string imu_frame_id;
   std::string lidar_frame_id;
+  std::string camera_frame_id;
   std::string base_frame_id;
   std::string odom_frame_id;
   std::string map_frame_id;
   bool publish_imu2lidar;
+  bool publish_lidar2camera;
+  Eigen::Isometry3d T_lidar_camera;
   double tf_time_offset;
 
   std::shared_ptr<rclcpp::Publisher<sensor_msgs::msg::PointCloud2>> points_pub;
