@@ -21,6 +21,7 @@
 #include <glim/mapping/sub_map.hpp>
 #include <glim/util/logging.hpp>
 #include <glim/util/config.hpp>
+#include <glim/util/profiler.hpp>
 #include <glim/util/concurrent_vector.hpp>
 #include <glim/util/extension_module.hpp>
 
@@ -79,6 +80,12 @@ public:
     icp_num_threads = config.param<int>("scan_context", "icp_num_threads", 4);
     loop_noise_score = config.param<double>("scan_context", "loop_noise_score", 0.5);
 
+    // Odometry-based dynamic ground estimation parameters
+    use_odometry_ground = config.param<bool>("scan_context", "use_odometry_ground", true);
+    initial_lidar_height = config.param<double>("scan_context", "lidar_height", 2.0);
+    ground_initialized = false;
+    initial_sensor_z = 0.0;
+
     logger->debug("ScanContext parameters:");
     logger->debug("  lidar_height: {}", sc->LIDAR_HEIGHT);
     logger->debug("  pc_num_ring: {}", sc->PC_NUM_RING);
@@ -90,6 +97,8 @@ public:
     logger->debug("  min_movement_threshold: {}", min_movement_threshold);
     logger->debug("  inlier_fraction_threshold: {}", inlier_fraction_threshold);
     logger->debug("  loop_noise_score: {}", loop_noise_score);
+    logger->debug("  use_odometry_ground: {}", use_odometry_ground);
+    logger->debug("  initial_lidar_height: {}", initial_lidar_height);
     logger->info("ScanContext loop detector ready");
 
     frame_count = 0;
@@ -152,6 +161,7 @@ public:
    *
    */
   void loop_detection_task() {
+    Profiler::instance().set_thread_name("scan_context");
     Eigen::Isometry3d last_T_odom_sensor = Eigen::Isometry3d::Identity();
 
     // Loop
@@ -172,15 +182,43 @@ public:
         frame_index_map[current] = odom_frame->id;
         last_T_odom_sensor = odom_frame->T_world_sensor();
 
+        // Calculate dynamic ground height based on odometry
+        double ground_z_offset = 0.0;
+        if (use_odometry_ground) {
+          const double current_sensor_z = odom_frame->T_world_sensor().translation().z();
+
+          if (!ground_initialized) {
+            // Initialize with first frame's sensor z position
+            initial_sensor_z = current_sensor_z;
+            ground_initialized = true;
+            logger->info("Odometry-based ground estimation initialized: sensor_z={:.3f}, initial_height={:.3f}",
+                         initial_sensor_z, initial_lidar_height);
+          }
+
+          // Calculate current ground z in world frame
+          // ground_z = initial_sensor_z - initial_lidar_height (assumed ground level)
+          // current height above ground = current_sensor_z - ground_z
+          // z_offset to apply = current_sensor_z - initial_sensor_z (relative height change)
+          ground_z_offset = current_sensor_z - initial_sensor_z;
+        }
+
         const auto& frame = odom_frame->frame;
         pcl::PointCloud<pcl::PointXYZ> cloud;
         cloud.resize(frame->size());
         for (int i = 0; i < frame->size(); i++) {
           cloud.at(i).getVector4fMap() = frame->points[i].cast<float>();
+          // Apply ground normalization: subtract the relative height change
+          // This makes all point clouds as if they were captured at the initial sensor height
+          if (use_odometry_ground) {
+            cloud.at(i).z -= static_cast<float>(ground_z_offset);
+          }
         }
 
+        Profiler::instance().start("scan_context");
         sc->makeAndSaveScancontextAndKeys(cloud);
         auto loop = sc->detectLoopClosureID();
+        Profiler::instance().stop("scan_context");
+
         if (loop.first < 0) {
           continue;
         }
@@ -257,7 +295,10 @@ public:
         // For limited FOV, use Identity rotation (assume same heading direction)
 
         Eigen::Isometry3d T_origin1_origin2 = T_origin1_frame1 * T_frame1_frame2 * T_origin2_frame2.inverse();
-        if (!validate_loop(submap1->frame, submap2->frame, T_origin1_origin2)) {
+        Profiler::instance().start("scan_context/icp_validation");
+        bool valid = validate_loop(submap1->frame, submap2->frame, T_origin1_origin2);
+        Profiler::instance().stop("scan_context/icp_validation");
+        if (!valid) {
           continue;
         }
 
@@ -366,6 +407,12 @@ private:
   int icp_max_iterations;
   int icp_num_threads;
   double loop_noise_score;  // Higher = weaker constraint, more robust to outliers
+
+  // Odometry-based dynamic ground estimation
+  bool use_odometry_ground;      // Enable/disable odometry-based ground estimation
+  double initial_lidar_height;   // Initial sensor height above ground (used with LIDAR_HEIGHT)
+  bool ground_initialized;       // Flag to track if ground estimation has been initialized
+  double initial_sensor_z;       // Z position of sensor at initialization
 
   std::shared_ptr<spdlog::logger> logger;
 };

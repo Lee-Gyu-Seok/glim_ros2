@@ -20,6 +20,10 @@
     "icp_max_iterations": 50,
     "icp_num_threads": 4,
     // VERY Strong loop constraint for maximum accuracy (lower = stronger)
-    "loop_noise_score": 0.05
+    "loop_noise_score": 0.05,
+    // Odometry-based dynamic ground estimation for handheld scenarios
+    // When enabled, sensor height changes are tracked via odometry and
+    // point clouds are normalized to a consistent ground reference
+    "use_odometry_ground": true
   }
 }
