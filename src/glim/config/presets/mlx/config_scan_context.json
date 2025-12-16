@@ -1,6 +1,6 @@
 {
   "scan_context": {
-    "lidar_height": 0.82,
+    "lidar_height": 0.97,
     "pc_num_ring": 20,
     "pc_num_sector": 60,
     "pc_max_radius": 30.0,
