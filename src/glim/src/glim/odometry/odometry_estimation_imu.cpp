@@ -50,6 +50,7 @@ OdometryEstimationIMUParams::OdometryEstimationIMUParams() {
   Config config(GlobalConfig::get_config_path("config_odometry"));
 
   fix_imu_bias = config.param<bool>("odometry_estimation", "fix_imu_bias", false);
+  disable_imu_factor = config.param<bool>("odometry_estimation", "disable_imu_factor", false);
 
   initialization_mode = config.param<std::string>("odometry_estimation", "initialization_mode", "LOOSE");
   const auto init_T_world_imu = config.param<Eigen::Isometry3d>("odometry_estimation", "init_T_world_imu");
@@ -243,10 +244,20 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
   imu_integration->erase_imu_data(imu_read_cursor);
   logger->trace("num_imu_integrated={}", num_imu_integrated);
 
-  // IMU state prediction
+  // IMU state prediction (used for deskewing regardless of disable_imu_factor)
   const gtsam::NavState predicted_nav_world_imu = imu_integration->integrated_measurements().predict(last_nav_world_imu, last_imu_bias);
-  const gtsam::Pose3 predicted_T_world_imu = predicted_nav_world_imu.pose();
-  const gtsam::Vector3 predicted_v_world_imu = predicted_nav_world_imu.velocity();
+  gtsam::Pose3 predicted_T_world_imu = predicted_nav_world_imu.pose();
+  gtsam::Vector3 predicted_v_world_imu = predicted_nav_world_imu.velocity();
+
+  // When disable_imu_factor is true, use constant velocity prediction for initial value (like CT mode)
+  // This prevents IMU prediction errors from affecting optimization
+  if (params->disable_imu_factor) {
+    const double dt = raw_frame->stamp - last_stamp;
+    // Constant velocity: position += velocity * dt, rotation unchanged
+    gtsam::Point3 cv_position = last_T_world_imu.translation() + last_v_world_imu * dt;
+    predicted_T_world_imu = gtsam::Pose3(last_T_world_imu.rotation(), cv_position);
+    predicted_v_world_imu = last_v_world_imu;  // Keep velocity constant
+  }
 
   new_stamps[X(current)] = raw_frame->stamp;
   new_stamps[V(current)] = raw_frame->stamp;
@@ -263,9 +274,16 @@ EstimationFrame::ConstPtr OdometryEstimationIMU::insert_frame(const Preprocessed
     new_factors.add(gtsam::PriorFactor<gtsam::imuBias::ConstantBias>(B(current), gtsam::imuBias::ConstantBias(params->imu_bias), gtsam::noiseModel::Isotropic::Precision(6, 1e3)));
   }
 
-  // Create IMU factor
+  // Create IMU factor (or skip if disable_imu_factor is true)
   gtsam::ImuFactor::shared_ptr imu_factor;
-  if (num_imu_integrated >= 2) {
+  if (params->disable_imu_factor) {
+    // IMU is used only for prediction and deskewing, not in factor graph
+    // Use constant velocity constraint instead
+    if (current == 1) {
+      logger->warn("ImuFactor DISABLED: using IMU for prediction/deskewing only (no ImuFactor in graph)");
+    }
+    new_factors.add(gtsam::BetweenFactor<gtsam::Vector3>(V(last), V(current), gtsam::Vector3::Zero(), gtsam::noiseModel::Isotropic::Sigma(3, 0.1)));
+  } else if (num_imu_integrated >= 2) {
     imu_factor = gtsam::make_shared<gtsam::ImuFactor>(X(last), V(last), X(current), V(current), B(last), imu_integration->integrated_measurements());
     new_factors.add(imu_factor);
   } else {

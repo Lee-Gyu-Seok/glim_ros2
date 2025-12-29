@@ -6,6 +6,8 @@
 
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/geometry/Pose3.h>
+#include <gtsam/navigation/NavState.h>
+#include <gtsam/navigation/ImuBias.h>
 #include <gtsam/slam/BetweenFactor.h>
 
 #include <gtsam_points/ann/ivox.hpp>
@@ -17,6 +19,8 @@
 #include <gtsam_points/optimizers/incremental_fixed_lag_smoother_with_fallback.hpp>
 
 #include <glim/util/config.hpp>
+#include <glim/common/imu_integration.hpp>
+#include <glim/common/cloud_deskewing.hpp>
 #include <glim/common/cloud_covariance_estimation.hpp>
 #include <glim/odometry/callbacks.hpp>
 
@@ -36,6 +40,18 @@ OdometryEstimationCTParams::OdometryEstimationCTParams() {
   num_threads = config.param<int>("odometry_estimation", "num_threads", 4);
   max_correspondence_distance = config.param<double>("odometry_estimation", "max_correspondence_distance", 1.0);
 
+  // IMU params
+  use_imu = config.param<bool>("odometry_estimation", "use_imu", false);
+
+  Config sensor_config(GlobalConfig::get_config_path("config_sensors"));
+  T_lidar_imu = sensor_config.param<Eigen::Isometry3d>("sensors", "T_lidar_imu", Eigen::Isometry3d::Identity());
+  auto bias = sensor_config.param<std::vector<double>>("sensors", "imu_bias");
+  if (bias && bias->size() == 6) {
+    imu_bias = Eigen::Map<const Eigen::Matrix<double, 6, 1>>(bias->data());
+  } else {
+    imu_bias.setZero();
+  }
+
   ivox_resolution = config.param<double>("odometry_estimation", "ivox_resolution", 1.0);
   ivox_min_points_dist = config.param<double>("odometry_estimation", "ivox_min_points_dist", 0.05);
   ivox_lru_thresh = config.param<int>("odometry_estimation", "ivox_lru_thresh", 30);
@@ -54,6 +70,19 @@ OdometryEstimationCTParams::~OdometryEstimationCTParams() {}
 
 OdometryEstimationCT::OdometryEstimationCT(const OdometryEstimationCTParams& params) : params(params) {
   covariance_estimation.reset(new CloudCovarianceEstimation(params.num_threads));
+
+  // Initialize IMU-related components if use_imu is true
+  if (params.use_imu) {
+    imu_integration.reset(new IMUIntegration);
+    deskewing.reset(new CloudDeskewing);
+    T_lidar_imu = params.T_lidar_imu;
+    T_imu_lidar = T_lidar_imu.inverse();
+    last_imu_bias = std::make_shared<gtsam::imuBias::ConstantBias>(params.imu_bias);
+    logger->info("CT mode with IMU enabled: using IMU for deskewing and initial value prediction");
+  } else {
+    T_lidar_imu.setIdentity();
+    T_imu_lidar.setIdentity();
+  }
 
   marginalized_cursor = 0;
   target_ivox.reset(new gtsam_points::iVox(params.ivox_resolution));
@@ -76,6 +105,14 @@ OdometryEstimationCT::OdometryEstimationCT(const OdometryEstimationCTParams& par
 
 OdometryEstimationCT::~OdometryEstimationCT() {}
 
+void OdometryEstimationCT::insert_imu(const double stamp, const Eigen::Vector3d& linear_acc, const Eigen::Vector3d& angular_vel) {
+  Callbacks::on_insert_imu(stamp, linear_acc, angular_vel);
+
+  if (params.use_imu && imu_integration) {
+    imu_integration->insert_imu(stamp, linear_acc, angular_vel);
+  }
+}
+
 EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedFrame::Ptr& raw_frame, std::vector<EstimationFrame::ConstPtr>& marginalized_frames) {
   Callbacks::on_insert_frame(raw_frame);
 
@@ -86,15 +123,47 @@ EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedF
   EstimationFrame::Ptr new_frame(new EstimationFrame);
   new_frame->id = current;
   new_frame->stamp = raw_frame->stamp;
-  new_frame->T_lidar_imu.setIdentity();
+  new_frame->T_lidar_imu = params.use_imu ? T_lidar_imu : Eigen::Isometry3d::Identity();
   new_frame->v_world_imu.setZero();
-  new_frame->imu_bias.setZero();
+  new_frame->imu_bias = params.use_imu ? last_imu_bias->vector() : Eigen::Matrix<double, 6, 1>::Zero();
   new_frame->raw_frame = raw_frame;
 
-  gtsam_points::PointCloudCPU::Ptr frame_cpu(new gtsam_points::PointCloudCPU(raw_frame->points));
+  // Deskew points using IMU if enabled
+  std::vector<Eigen::Vector4d> points_for_frame;
+  if (params.use_imu && imu_integration && current > 0) {
+    // Get last frame state for IMU prediction
+    const auto& last_frame = frames[last];
+    const auto last_T_world_lidar = smoother->calculateEstimate<gtsam::Pose3>(X(last));
+    const gtsam::Pose3 last_T_world_imu((Eigen::Isometry3d(last_T_world_lidar.matrix()) * T_lidar_imu).matrix());
+
+    // IMU integration between LiDAR scans
+    int num_imu_integrated = 0;
+    const int imu_read_cursor = imu_integration->integrate_imu(last_frame->stamp, raw_frame->stamp, *last_imu_bias, &num_imu_integrated);
+    imu_integration->erase_imu_data(imu_read_cursor);
+
+    if (num_imu_integrated >= 2) {
+      // Predict IMU state
+      gtsam::NavState predicted_nav = imu_integration->integrated_measurements().predict(last_nav_world_imu, *last_imu_bias);
+
+      // Intra-scan motion prediction for deskewing
+      std::vector<double> pred_imu_times;
+      std::vector<Eigen::Isometry3d> pred_imu_poses;
+      imu_integration->integrate_imu(raw_frame->stamp, raw_frame->scan_end_time, predicted_nav, *last_imu_bias, pred_imu_times, pred_imu_poses);
+
+      // Deskew points
+      points_for_frame = deskewing->deskew(T_imu_lidar, pred_imu_times, pred_imu_poses, raw_frame->stamp, raw_frame->times, raw_frame->points);
+    } else {
+      logger->warn("insufficient IMU data for deskewing (num_imu={}), using raw points", num_imu_integrated);
+      points_for_frame = raw_frame->points;
+    }
+  } else {
+    points_for_frame = raw_frame->points;
+  }
+
+  gtsam_points::PointCloudCPU::Ptr frame_cpu(new gtsam_points::PointCloudCPU(points_for_frame));
   frame_cpu->add_times(raw_frame->times);
 
-  covariance_estimation->estimate(raw_frame->points, raw_frame->neighbors, frame_cpu->normals_storage, frame_cpu->covs_storage);
+  covariance_estimation->estimate(points_for_frame, raw_frame->neighbors, frame_cpu->normals_storage, frame_cpu->covs_storage);
   frame_cpu->normals = frame_cpu->normals_storage.data();
   frame_cpu->covs = frame_cpu->covs_storage.data();
 
@@ -109,6 +178,12 @@ EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedF
 
   if (current == 0) {
     new_frame->set_T_world_sensor(FrameID::LIDAR, Eigen::Isometry3d::Identity());
+
+    // Initialize IMU state if use_imu is enabled
+    if (params.use_imu) {
+      Eigen::Isometry3d T_world_imu = Eigen::Isometry3d::Identity() * T_lidar_imu;
+      last_nav_world_imu = gtsam::NavState(gtsam::Pose3(T_world_imu.matrix()), Eigen::Vector3d::Zero());
+    }
 
     new_stamps[X(0)] = new_frame->stamp;
     new_stamps[Y(0)] = new_frame->stamp;
@@ -282,6 +357,14 @@ EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedF
       Callbacks::on_smoother_corruption(frames[current]->stamp);
       break;
     }
+  }
+
+  // Update IMU state for next frame prediction
+  if (params.use_imu && current > 0) {
+    Eigen::Isometry3d T_world_lidar = frames[current]->T_world_sensor();
+    Eigen::Isometry3d T_world_imu = T_world_lidar * T_lidar_imu;
+    Eigen::Vector3d v_world_imu = frames[current]->v_world_imu;
+    last_nav_world_imu = gtsam::NavState(gtsam::Pose3(T_world_imu.matrix()), v_world_imu);
   }
 
   std::vector<EstimationFrame::ConstPtr> active_frames(frames.begin() + marginalized_cursor, frames.end());

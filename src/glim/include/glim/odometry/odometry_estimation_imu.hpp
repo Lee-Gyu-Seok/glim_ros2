@@ -39,6 +39,7 @@ public:
 public:
   // Sensor params;
   bool fix_imu_bias;
+  bool disable_imu_factor;  ///< If true, IMU is used only for prediction/deskewing, not in factor graph
   double imu_bias_noise;
   Eigen::Isometry3d T_lidar_imu;
   Eigen::Matrix<double, 6, 1> imu_bias;

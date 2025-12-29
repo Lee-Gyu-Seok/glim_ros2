@@ -4,11 +4,17 @@
     "initialization_mode": "LOOSE",
     "initialization_window_size": 3.0,
     "init_pose_damping_scale": 1e+16,
-    "smoother_lag": 10.0,
+    // smoother_lag: 최적화 윈도우 크기 (초)
+    "smoother_lag": 5.0,
+    // use_isam2_dogleg: DogLeg 최적화기 사용 (GN보다 안정적이나 느림)
     "use_isam2_dogleg": false,
+    // relinearize 설정
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
-    "fix_imu_bias": false,
+    "fix_imu_bias": true,
+    // disable_imu_factor: true이면 IMU는 포즈 예측/deskewing에만 사용, Factor Graph에서 제외
+    "disable_imu_factor": true,
+    // VGICP 해상도
     "vgicp_resolution": 0.25,
     "vgicp_voxelmap_levels": 2,
     "vgicp_voxelmap_scaling_factor": 2.0,

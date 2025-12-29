@@ -247,6 +247,7 @@ config/presets/mlx/
 ├── config_preprocess.json       # 포인트 클라우드 전처리 (다운샘플링, 범위 필터)
 ├── config_odometry_cpu.json     # CPU 기반 Odometry (GICP/VGICP/SmallGICP)
 ├── config_odometry_gpu.json     # GPU 기반 Odometry (VGICP-GPU)
+├── config_odometry_ct.json      # CT 모드 Odometry (Continuous-Time GICP)
 ├── config_sub_mapping_cpu.json  # 서브맵 생성 (CPU)
 ├── config_sub_mapping_gpu.json  # 서브맵 생성 (GPU)
 ├── config_global_mapping_cpu.json  # 전역 최적화 (CPU)
@@ -297,6 +298,7 @@ config/presets/mlx/
 #### 1. Odometry Estimation (오도메트리)
 LiDAR 포인트클라우드와 IMU 데이터를 융합하여 실시간 자세 추정을 수행합니다.
 
+##### GPU 모드 (VGICP-GPU)
 - 설정 파일: `config_odometry_gpu.json`
 - 현재 설정:
   - **Registration**: VGICP-GPU (Voxelized GICP, CUDA 가속)
@@ -308,9 +310,67 @@ LiDAR 포인트클라우드와 IMU 데이터를 융합하여 실시간 자세 �
   "so_name": "libodometry_estimation_gpu.so",
   "vgicp_resolution": 0.25,
   "vgicp_voxelmap_levels": 2,
-  "smoother_lag": 10.0
+  "smoother_lag": 10.0,
+  "disable_imu_factor": false
 }
 ```
+
+**`disable_imu_factor` 옵션:**
+
+GPU 모드에서 IMU Factor Graph 사용 시 Z축 지터(수직 진동)가 발생하는 경우, `disable_imu_factor: true`로 설정하면 IMU를 deskewing에만 사용하고 Factor Graph에서는 제외합니다.
+
+| 설정 | IMU 사용 방식 | 권장 상황 |
+|-----|-------------|----------|
+| `false` (기본) | Factor Graph에 ImuFactor 추가 | IMU 품질이 좋고 캘리브레이션이 정확한 경우 |
+| `true` | Deskewing + 초기값 예측에만 사용 | Z축 지터 발생 시, IMU 노이즈가 큰 경우 |
+
+`disable_imu_factor: true` 설정 시 동작:
+- IMU 적분으로 포인트클라우드 deskewing 수행
+- Factor Graph에는 ImuFactor 대신 등속 제약조건(BetweenFactor) 사용
+- CT 모드와 유사한 IMU 활용 방식
+
+##### CT 모드 (Continuous-Time GICP)
+- 설정 파일: `config_odometry_ct.json`
+- 특징:
+  - **Continuous-Time ICP**: 스캔 내 연속적인 모션을 모델링하여 스캔 시작/끝 포즈를 동시 최적화
+  - **iVox 기반 Scan-to-Model**: O(1) 최근접 이웃 탐색으로 빠른 매칭
+  - **IMU Deskewing**: IMU 적분으로 각 포인트의 정확한 위치 보정
+  - **LM 최적화**: Levenberg-Marquardt 최적화로 robust한 수렴
+
+```json
+{
+  "so_name": "libodometry_estimation_ct.so",
+  "use_imu": true,
+  "ivox_resolution": 0.5,
+  "ivox_min_points_dist": 0.03,
+  "ivox_lru_thresh": 40,
+  "max_correspondence_distance": 0.5,
+  "lm_max_iterations": 12,
+  "location_consistency_inf_scale": 1e-2,
+  "constant_velocity_inf_scale": 1e-2
+}
+```
+
+| 파라미터 | 설명 | 권장값 |
+|---------|------|--------|
+| `use_imu` | IMU deskewing 활성화 | `true` |
+| `ivox_resolution` | iVox 복셀 크기 (m) | 0.3~0.5 |
+| `ivox_min_points_dist` | 복셀 내 최소 점 간격 (m) | 0.03 |
+| `ivox_lru_thresh` | LRU 캐시 임계값 (스캔 수) | 40 |
+| `max_correspondence_distance` | 최대 대응점 거리 (m) | 0.5~1.0 |
+| `lm_max_iterations` | LM 최대 반복 횟수 | 10~15 |
+| `location_consistency_inf_scale` | 위치 일관성 가중치 | 1e-2 |
+| `constant_velocity_inf_scale` | 등속 모션 가중치 | 1e-2 |
+
+**GPU 모드 vs CT 모드 선택 가이드:**
+
+| 특성 | GPU 모드 | CT 모드 |
+|-----|----------|---------|
+| 하드웨어 요구 | CUDA GPU 필수 | CPU만으로 동작 |
+| 빠른 회전 대응 | 양호 | 우수 (연속 시간 모델링) |
+| 연산 속도 | 빠름 (GPU 병렬화) | 중간 (CPU 기반) |
+| 메모리 사용 | GPU 메모리 사용 | 시스템 메모리만 사용 |
+| IMU 의존도 | Factor Graph에서 사용 | Deskewing + 초기값 예측에 사용 |
 
 #### 2. Sub Mapping (서브맵 생성)
 연속된 키프레임들을 묶어 서브맵을 생성합니다.

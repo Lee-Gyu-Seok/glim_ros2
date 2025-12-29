@@ -1,0 +1,27 @@
+{
+  "odometry_estimation": {
+    "so_name": "libodometry_estimation_ct.so",
+
+    // CT-GICP + IMU deskewing
+    "use_imu": true,
+
+    // iVox 설정 (scan-to-model matching용 voxel map)
+    "ivox_resolution": 0.5,
+    "ivox_min_points_dist": 0.03,
+    "ivox_lru_thresh": 40,
+
+    // CT-GICP 최적화 설정
+    "max_correspondence_distance": 0.5,
+    "lm_max_iterations": 12,
+    "location_consistency_inf_scale": 1e-2,
+    "constant_velocity_inf_scale": 1e-2,
+
+    // iSAM2 smoother 설정
+    "smoother_lag": 5.0,
+    "use_isam2_dogleg": false,
+    "isam2_relinearize_skip": 1,
+    "isam2_relinearize_thresh": 0.1,
+
+    "num_threads": 8
+  }
+}

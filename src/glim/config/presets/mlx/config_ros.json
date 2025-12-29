@@ -7,8 +7,9 @@
     // Points config
     "keep_raw_points": true, // RGB colorizer에서 원본 포인트 사용 (다운샘플링 없음)
     // IMU config
-    // # past: "imu_time_offset": 0.0,
-    "imu_time_offset": -0.012,  // IMU validator 분석 결과 적용 (IMU 데이터가 LiDAR보다 12ms 빠름)
+    // # past: "imu_time_offset": 0.0, -0.012, -0.002, -0.013
+    // Note: NID score (~0.78)는 데이터 특성 (정지 상태, 단조로운 움직임)으로 인한 것으로 센서 문제 아님
+    "imu_time_offset": -0.012,  // 원점 회귀 오차 5cm 이내 달성한 값 유지
     "points_time_offset": 0.0,
     "acc_scale": 1.0,
     // TF config
@@ -27,9 +28,9 @@
       // "libstandard_viewer.so",  // Main UI viewer (disabled - use RViz instead)
       "librgb_colorizer_ros.so",  // RGB colorizer (must be before rviz_viewer)
       "librviz_viewer.so",
-      "libscan_context_loop_detector.so",
-      "libgravity_estimator.so",
-      "libimu_validator_headless.so"  // IMU calibration validator (headless, logs to console)
+      "libscan_context_loop_detector.so"
+      // "libgravity_estimator.so",  // Disabled for testing
+      // "libimu_validator_headless.so"
     ],
     // Topics for MLX
     "imu_topic": "/spadi/imu",

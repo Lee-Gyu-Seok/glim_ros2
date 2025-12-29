@@ -5,11 +5,13 @@
 #include <future>
 
 #include <boost/shared_ptr.hpp>
+#include <gtsam/navigation/NavState.h>
+#include <gtsam/navigation/ImuBias.h>
 #include <glim/odometry/odometry_estimation_base.hpp>
 
 namespace gtsam {
 class Values;
-}
+}  // namespace gtsam
 
 namespace gtsam_points {
 struct FlatContainer;
@@ -25,6 +27,8 @@ class IncrementalFixedLagSmootherExtWithFallback;
 
 namespace glim {
 
+class IMUIntegration;
+class CloudDeskewing;
 class CloudCovarianceEstimation;
 
 /**
@@ -37,6 +41,11 @@ public:
 
 public:
   int num_threads;  ///< Number of threads
+
+  // IMU params
+  bool use_imu;                      ///< If true, use IMU for deskewing and initial value prediction
+  Eigen::Isometry3d T_lidar_imu;     ///< Transformation from LiDAR to IMU
+  Eigen::Matrix<double, 6, 1> imu_bias;  ///< IMU bias
 
   double ivox_resolution;       ///< iVox resolution
   double ivox_min_points_dist;  ///< Minimum distance between points in an iVox cell
@@ -55,7 +64,7 @@ public:
 };
 
 /**
- * @brief LiDAR-only odometry estimation based on CT-GICP scan-to-model matching
+ * @brief LiDAR odometry estimation based on CT-GICP scan-to-model matching with optional IMU support
  */
 class OdometryEstimationCT : public OdometryEstimationBase {
 public:
@@ -64,13 +73,23 @@ public:
   OdometryEstimationCT(const OdometryEstimationCTParams& params = OdometryEstimationCTParams());
   virtual ~OdometryEstimationCT() override;
 
-  virtual bool requires_imu() const override { return false; }
+  virtual bool requires_imu() const override { return params.use_imu; }
+
+  virtual void insert_imu(const double stamp, const Eigen::Vector3d& linear_acc, const Eigen::Vector3d& angular_vel) override;
 
   virtual EstimationFrame::ConstPtr insert_frame(const PreprocessedFrame::Ptr& frame, std::vector<EstimationFrame::ConstPtr>& marginalized_frames) override;
 
 private:
   using Params = OdometryEstimationCTParams;
   Params params;
+
+  // IMU-related
+  std::unique_ptr<IMUIntegration> imu_integration;
+  std::unique_ptr<CloudDeskewing> deskewing;
+  Eigen::Isometry3d T_lidar_imu;
+  Eigen::Isometry3d T_imu_lidar;
+  gtsam::NavState last_nav_world_imu;
+  std::shared_ptr<gtsam::imuBias::ConstantBias> last_imu_bias;
 
   std::unique_ptr<CloudCovarianceEstimation> covariance_estimation;
 
