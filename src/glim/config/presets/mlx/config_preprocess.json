@@ -11,6 +11,8 @@
     "enable_outlier_removal": false,
     "outlier_removal_k": 10,
     "outlier_std_mul_factor": 1.0,
+    "enable_intensity_filter": true,
+    "intensity_min_thresh": 20.0,
     "enable_cropbox_filter": false,
     "crop_bbox_frame": "lidar",
     "crop_bbox_min": [-1.0, -1.0, -1.0],

@@ -99,7 +99,7 @@ private:
   struct ColorizeTask {
     double stamp;
     double image_stamp;  // Timestamp of matched image (for motion compensation)
-    PreprocessedFrame::ConstPtr raw_frame;  // Keep reference to avoid copying
+    gtsam_points::PointCloud::ConstPtr frame;  // Deskewed points from EstimationFrame
     cv::Mat image;
     Eigen::Isometry3d T_camera_points;
     Eigen::Isometry3d T_lidar_imu;  // LiDAR-IMU transformation

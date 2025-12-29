@@ -28,6 +28,8 @@ public:
   bool enable_outlier_removal;        ///< If true, apply statistical outlier removal
   int outlier_removal_k;              ///< Number of neighbors used for outlier removal
   double outlier_std_mul_factor;      ///< Statistical outlier removal std dev threshold multiplication factor
+  bool enable_intensity_filter;       ///< If true, filter points based on intensity
+  double intensity_min_thresh;        ///< Minimum intensity threshold (points below this are removed)
   bool enable_cropbox_filter;         ///< If true, filter points out points within box
   std::string crop_bbox_frame;        ///< Bounding box reference frame
   Eigen::Vector3d crop_bbox_min;      ///< Bounding box min point

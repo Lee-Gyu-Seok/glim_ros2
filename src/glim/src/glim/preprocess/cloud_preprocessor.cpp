@@ -34,6 +34,8 @@ CloudPreprocessorParams::CloudPreprocessorParams() {
   enable_outlier_removal = config.param<bool>("preprocess", "enable_outlier_removal", false);
   outlier_removal_k = config.param<int>("preprocess", "outlier_removal_k", 10);
   outlier_std_mul_factor = config.param<double>("preprocess", "outlier_std_mul_factor", 2.0);
+  enable_intensity_filter = config.param<bool>("preprocess", "enable_intensity_filter", false);
+  intensity_min_thresh = config.param<double>("preprocess", "intensity_min_thresh", 0.0);
 
   enable_cropbox_filter = config.param<bool>("preprocess", "enable_cropbox_filter", false);
   crop_bbox_frame = config.param<std::string>("preprocess", "crop_bbox_frame", "lidar");
@@ -95,6 +97,36 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
     frame->intensities = const_cast<double*>(raw_points->intensities.data());
   }
 
+  // Intensity filter (before downsampling to preserve intensity data)
+  // Also create filtered raw_points for RGB colorization
+  RawPoints::Ptr filtered_raw_points;
+  if (params.enable_intensity_filter && frame->intensities) {
+    std::vector<int> intensity_indices;
+    intensity_indices.reserve(frame->size());
+    for (int i = 0; i < frame->size(); i++) {
+      if (frame->intensities[i] >= params.intensity_min_thresh) {
+        intensity_indices.push_back(i);
+      }
+    }
+    spdlog::debug("Intensity filter: {} -> {} points (thresh={})", frame->size(), intensity_indices.size(), params.intensity_min_thresh);
+
+    // Create filtered RawPoints for RGB colorization
+    filtered_raw_points.reset(new RawPoints);
+    filtered_raw_points->stamp = raw_points->stamp;
+    filtered_raw_points->points.reserve(intensity_indices.size());
+    filtered_raw_points->times.reserve(intensity_indices.size());
+    filtered_raw_points->intensities.reserve(intensity_indices.size());
+    for (int idx : intensity_indices) {
+      filtered_raw_points->points.push_back(raw_points->points[idx]);
+      filtered_raw_points->times.push_back(raw_points->times[idx]);
+      if (!raw_points->intensities.empty()) {
+        filtered_raw_points->intensities.push_back(raw_points->intensities[idx]);
+      }
+    }
+
+    frame = gtsam_points::sample(frame, intensity_indices);
+  }
+
   // Downsampling
   if (params.use_random_grid_downsampling) {
     const double rate = params.downsample_target > 0 ? static_cast<double>(params.downsample_target) / frame->size() : params.downsample_rate;
@@ -116,6 +148,7 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
   for (int i = 0; i < frame->size(); i++) {
     const bool is_finite = frame->points[i].allFinite();
     const double squared_dist = (Eigen::Vector4d() << frame->points[i].head<3>(), 0.0).finished().squaredNorm();
+
     if (squared_dist > squared_distance_near_thresh && squared_dist < squared_distance_far_thresh && is_finite) {
       indices.push_back(i);
     }
@@ -178,7 +211,8 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
   }
 
   // Store raw (non-downsampled) points for RGB colorization
-  preprocessed->raw_points = raw_points;
+  // Use intensity-filtered points if available, otherwise use original
+  preprocessed->raw_points = filtered_raw_points ? filtered_raw_points : raw_points;
 
   preprocessed->k_neighbors = params.k_correspondences;
   preprocessed->neighbors = find_neighbors(frame->points, frame->size(), params.k_correspondences);

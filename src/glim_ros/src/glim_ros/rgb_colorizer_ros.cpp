@@ -359,9 +359,8 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
     return;
   }
 
-  // Check if raw_frame and raw_points are available
-  if (!frame->raw_frame || !frame->raw_frame->raw_points ||
-      frame->raw_frame->raw_points->points.empty()) {
+  // Check if deskewed frame is available
+  if (!frame->frame || frame->frame->size() == 0) {
     return;
   }
 
@@ -410,7 +409,7 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
   ColorizeTask task;
   task.stamp = frame->stamp;
   task.image_stamp = matched_image_stamp;
-  task.raw_frame = frame->raw_frame;
+  task.frame = frame->frame;  // Use deskewed points
   task.image = matched_image;
   task.T_camera_points = T_camera_lidar;
   task.T_lidar_imu = frame->T_lidar_imu;
@@ -438,12 +437,13 @@ std::shared_ptr<FrameRGBFovData> RGBColorizerROS::process_colorization_sync(cons
   // Process the task (colorization) synchronously with timing
   auto t_start = std::chrono::high_resolution_clock::now();
 
-  const auto& raw_points = task.raw_frame->raw_points->points;
+  const int num_points = task.frame->size();
+  const Eigen::Vector4d* points = task.frame->points;
 
   // Time: colorization
   auto t_colorize_start = std::chrono::high_resolution_clock::now();
   ColorizedPoints result = colorize_points_fov_only(
-    raw_points.data(), raw_points.size(), task.image, task.T_camera_points, &task);
+    points, num_points, task.image, task.T_camera_points, &task);
   auto t_colorize_end = std::chrono::high_resolution_clock::now();
   double colorize_ms = std::chrono::duration<double, std::milli>(t_colorize_end - t_colorize_start).count();
 
@@ -481,7 +481,7 @@ std::shared_ptr<FrameRGBFovData> RGBColorizerROS::process_colorization_sync(cons
 
   if (frame_count % 100 == 0) {
     logger->debug("[TIMING] colorization avg: colorize={:.2f}ms, total={:.2f}ms (points={})",
-      sum_colorize_ms / 100, sum_total_ms / 100, raw_points.size());
+      sum_colorize_ms / 100, sum_total_ms / 100, num_points);
     sum_colorize_ms = sum_total_ms = 0;
   }
 
@@ -610,10 +610,11 @@ RGBColorizerROS::ColorizedPoints RGBColorizerROS::colorize_points_fov_only(
   // Motion compensation setup
   // If enabled, we transform each LiDAR point to the camera's coordinate frame at the image capture time
   // This corrects for the time difference between when each LiDAR point was captured and when the image was taken
+  // Note: When using deskewed points, motion compensation may still help for camera-lidar time offset
   const bool do_motion_comp = enable_motion_compensation && task != nullptr &&
                                task->imu_rate_trajectory.cols() > 0 &&
-                               task->raw_frame != nullptr &&
-                               !task->raw_frame->times.empty();
+                               task->frame != nullptr &&
+                               task->frame->times != nullptr;
 
   // Pre-compute transforms for motion compensation
   Eigen::Isometry3d T_lidar_imu = Eigen::Isometry3d::Identity();
@@ -655,9 +656,9 @@ RGBColorizerROS::ColorizedPoints RGBColorizerROS::colorize_points_fov_only(
   std::vector<float> depths(num_points);
 
   // Get point timestamps for motion compensation (if available)
-  const std::vector<double>* point_times = nullptr;
-  if (do_motion_comp && task != nullptr && task->raw_frame != nullptr) {
-    point_times = &(task->raw_frame->times);
+  const double* point_times = nullptr;
+  if (do_motion_comp && task != nullptr && task->frame != nullptr) {
+    point_times = task->frame->times;
   }
 
   // Parallel projection calculation
@@ -670,9 +671,9 @@ RGBColorizerROS::ColorizedPoints RGBColorizerROS::colorize_points_fov_only(
 
     // Motion compensation: Transform point to the LiDAR pose at image capture time
     // This ensures each point is projected from the correct viewpoint
-    if (do_motion_comp && point_times != nullptr && static_cast<size_t>(i) < point_times->size()) {
+    if (do_motion_comp && point_times != nullptr) {
       // Absolute time when this point was captured
-      double point_abs_time = task->stamp + (*point_times)[i];
+      double point_abs_time = task->stamp + point_times[i];
 
       // Get IMU pose at point capture time
       Eigen::Isometry3d T_world_imu_at_point = interpolate_imu_pose(task->imu_rate_trajectory, point_abs_time);
