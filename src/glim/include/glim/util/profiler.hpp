@@ -157,13 +157,29 @@ public:
     }
     std::sort(sorted_thread_names.begin(), sorted_thread_names.end());
 
+    // Define processing order for main thread (pipeline order)
+    auto get_order = [](const std::string& name) -> int {
+      if (name == "preprocess") return 0;
+      if (name == "odometry") return 1;
+      if (name == "sub_mapping") return 2;
+      if (name == "global_mapping") return 3;
+      return 100;  // Unknown items go to the end
+    };
+
     // Output stats grouped by thread
     for (const auto& thread_name : sorted_thread_names) {
       auto& stats = thread_stats[thread_name];
 
-      // Sort by name within thread
+      // Sort by processing order for main thread, alphabetically for others
       std::sort(stats.begin(), stats.end(),
-                [](const auto& a, const auto& b) { return a.first < b.first; });
+                [&get_order, &thread_name](const auto& a, const auto& b) {
+                  if (thread_name == "main") {
+                    int order_a = get_order(a.first);
+                    int order_b = get_order(b.first);
+                    if (order_a != order_b) return order_a < order_b;
+                  }
+                  return a.first < b.first;
+                });
 
       ofs << "# ----------------------------------------" << std::endl;
       ofs << "# Thread: " << thread_name << std::endl;

@@ -18,7 +18,6 @@ int main(int argc, char** argv) {
   auto glim = std::make_shared<glim::GlimROS>(options);
 
   rclcpp::spin(glim);
-  rclcpp::shutdown();
 
   // Create Log directory
   std::string log_dir = std::string(GLIM_ROS_SOURCE_DIR) + "/Log";
@@ -37,6 +36,9 @@ int main(int argc, char** argv) {
   glim->wait();
   glim->save(dump_path);
   spdlog::info("Map saved to: {}", dump_path);
+
+  // Shutdown ROS2 after all processing is complete
+  rclcpp::shutdown();
 
   return 0;
 }

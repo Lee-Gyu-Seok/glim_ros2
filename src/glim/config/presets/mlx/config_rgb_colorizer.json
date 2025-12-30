@@ -22,7 +22,7 @@
     "image_resize_scale": 0.25,            // Scale factor: 1.0=original, 0.5=half size, 0.25=quarter size
 
     // Motion compensation (correct for LiDAR-camera time difference using IMU trajectory)
-    "enable_motion_compensation": false,
+    "enable_motion_compensation": true,
 
     // Colmap output (for 3D Gaussian Splatting)
     // Saves undistorted images and camera poses in Colmap format

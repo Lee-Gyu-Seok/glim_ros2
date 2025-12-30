@@ -19,6 +19,7 @@
 #include <gtsam_points/optimizers/incremental_fixed_lag_smoother_with_fallback.hpp>
 
 #include <glim/util/config.hpp>
+#include <glim/util/profiler.hpp>
 #include <glim/common/imu_integration.hpp>
 #include <glim/common/cloud_deskewing.hpp>
 #include <glim/common/cloud_covariance_estimation.hpp>
@@ -64,6 +65,8 @@ OdometryEstimationCTParams::OdometryEstimationCTParams() {
   use_isam2_dogleg = config.param<bool>("odometry_estimation", "use_isam2_dogleg", false);
   isam2_relinearize_skip = config.param<int>("odometry_estimation", "isam2_relinearize_skip", 1);
   isam2_relinearize_thresh = config.param<double>("odometry_estimation", "isam2_relinearize_thresh", 0.1);
+
+  save_imu_rate_trajectory = config.param<bool>("odometry_estimation", "save_imu_rate_trajectory", false);
 }
 
 OdometryEstimationCTParams::~OdometryEstimationCTParams() {}
@@ -114,6 +117,7 @@ void OdometryEstimationCT::insert_imu(const double stamp, const Eigen::Vector3d&
 }
 
 EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedFrame::Ptr& raw_frame, std::vector<EstimationFrame::ConstPtr>& marginalized_frames) {
+  GLIM_PROFILE_START("odometry");
   Callbacks::on_insert_frame(raw_frame);
 
   const int current = frames.size();
@@ -152,6 +156,16 @@ EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedF
 
       // Deskew points
       points_for_frame = deskewing->deskew(T_imu_lidar, pred_imu_times, pred_imu_poses, raw_frame->stamp, raw_frame->times, raw_frame->points);
+
+      // Save IMU-rate trajectory for motion compensation in RGB colorizer
+      if (params.save_imu_rate_trajectory && !pred_imu_times.empty()) {
+        new_frame->imu_rate_trajectory.resize(8, pred_imu_times.size());
+        for (size_t i = 0; i < pred_imu_times.size(); i++) {
+          const Eigen::Vector3d trans = pred_imu_poses[i].translation();
+          const Eigen::Quaterniond quat(pred_imu_poses[i].linear());
+          new_frame->imu_rate_trajectory.col(i) << pred_imu_times[i], trans, quat.x(), quat.y(), quat.z(), quat.w();
+        }
+      }
     } else {
       logger->warn("insufficient IMU data for deskewing (num_imu={}), using raw points", num_imu_integrated);
       points_for_frame = raw_frame->points;
@@ -399,6 +413,7 @@ EstimationFrame::ConstPtr OdometryEstimationCT::insert_frame(const PreprocessedF
     target_ivox_frame = frame;
   }
 
+  GLIM_PROFILE_STOP("odometry");
   return new_frame;
 }
 

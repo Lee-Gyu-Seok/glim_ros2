@@ -2,17 +2,19 @@
   /*** Preprocessing parameters for MLX LiDAR ***/
   // MLX: 56 x 192 = 10752 points per scan at 20Hz
   "preprocess": {
-    "distance_near_thresh": 0.3,
+    "distance_near_thresh": 0.5,
     "distance_far_thresh": 100.0,
     "use_random_grid_downsampling": false,
     "downsample_resolution": 0.0,
     "random_downsample_target": 0,
     "random_downsample_rate": 0.5,
-    "enable_outlier_removal": false,
-    "outlier_removal_k": 10,
-    "outlier_std_mul_factor": 1.0,
+    // Statistical Outlier Removal (SOR) - 고립된 노이즈 포인트 제거
+    "enable_outlier_removal": true,
+    "outlier_removal_k": 15,
+    "outlier_std_mul_factor": 1.2,
+    // Intensity filter - 낮은 반사 강도의 불확실한 포인트 제거
     "enable_intensity_filter": true,
-    "intensity_min_thresh": 20.0,
+    "intensity_min_thresh": 30.0,
     "enable_cropbox_filter": false,
     "crop_bbox_frame": "lidar",
     "crop_bbox_min": [-1.0, -1.0, -1.0],

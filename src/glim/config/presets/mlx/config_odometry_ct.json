@@ -22,6 +22,9 @@
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
 
+    // IMU-rate trajectory 저장 (RGB colorizer motion compensation용)
+    "save_imu_rate_trajectory": true,
+
     "num_threads": 8
   }
 }

@@ -61,6 +61,8 @@ public:
   bool use_isam2_dogleg;  ///< If true, use dogleg optimizer
   double isam2_relinearize_skip;
   double isam2_relinearize_thresh;
+
+  bool save_imu_rate_trajectory;  ///< If true, save IMU-rate trajectory for motion compensation
 };
 
 /**

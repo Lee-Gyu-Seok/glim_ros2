@@ -10,6 +10,7 @@
 #include <gtsam_points/util/parallelism.hpp>
 
 #include <glim/util/config.hpp>
+#include <glim/util/profiler.hpp>
 #include <glim/util/convert_to_string.hpp>
 
 #ifdef GTSAM_POINTS_USE_TBB
@@ -87,6 +88,7 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess(const RawPoints::ConstPtr& 
 }
 
 PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::ConstPtr& raw_points) {
+  GLIM_PROFILE_START("preprocess");
   spdlog::trace("preprocessing input: {} points", raw_points->size());
 
   gtsam_points::PointCloud::Ptr frame(new gtsam_points::PointCloud);
@@ -221,6 +223,7 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
 
   spdlog::trace("preprocessed: {} -> {} points", raw_points->size(), preprocessed->size());
 
+  GLIM_PROFILE_STOP("preprocess");
   return preprocessed;
 }
 
