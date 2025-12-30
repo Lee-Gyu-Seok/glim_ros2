@@ -4,6 +4,13 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
+#include <ctime>
+#include <map>
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -14,6 +21,11 @@
 #include <glim/mapping/callbacks.hpp>
 #include <glim/util/logging.hpp>
 #include <glim/util/config.hpp>
+
+// Define GLIM_ROS_SOURCE_DIR if not defined (for IDE compatibility)
+#ifndef GLIM_ROS_SOURCE_DIR
+#define GLIM_ROS_SOURCE_DIR "."
+#endif
 
 namespace glim {
 
@@ -62,13 +74,19 @@ inline cv::Vec3b bilinear_sample(const cv::Mat& image, float uf, float vf) {
 CallbackSlot<void(const ColorizedPointCloud&)> RGBColorizerCallbacks::on_frame_colorized;
 CallbackSlot<void(const ColorizedSubmap&)> RGBColorizerCallbacks::on_submap_colorized;
 
-RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), undist_maps_initialized(false) {
+RGBColorizerROS::RGBColorizerROS()
+  : logger(create_module_logger("rgb_color")),
+    undist_maps_initialized(false),
+    colmap_output_enabled(false),
+    colmap_last_saved_image_stamp(-1.0),
+    colmap_image_counter(0),
+    colmap_initialized(false),
+    colmap_undist_maps_initialized(false) {
   logger->info("starting RGB colorizer ROS module");
 
   // Load RGB colorizer specific config
   const Config config(GlobalConfig::get_config_path("config_rgb_colorizer"));
 
-  enabled = config.param<bool>("rgb_colorizer", "enabled", false);
   image_topic = config.param<std::string>("rgb_colorizer", "image_topic", "/image/compressed");
   sync_tolerance = config.param<double>("rgb_colorizer", "sync_tolerance", 0.1);
   max_buffer_size = config.param<int>("rgb_colorizer", "max_buffer_size", 30);
@@ -118,33 +136,39 @@ RGBColorizerROS::RGBColorizerROS() : logger(create_module_logger("rgb_color")), 
     logger->info("Submap voxel resolution: {}m (from GLIM sub_mapping config)", submap_voxel_resolution);
   }
 
-  if (enabled) {
-    if (load_calibration()) {
-      logger->info("RGB colorizer enabled with calibration from config_sensors.json");
-    } else {
-      logger->warn("RGB colorizer: Failed to load calibration from config_sensors.json, disabling");
-      enabled = false;
-    }
-  } else {
-    logger->info("RGB colorizer is disabled");
-  }
+  // Colmap output settings
+  colmap_output_enabled = config.param<bool>("rgb_colorizer", "colmap_output_enabled", false);
+  logger->info("Colmap output: {}", colmap_output_enabled ? "enabled" : "disabled");
 
-  if (enabled) {
-    set_callbacks();
-    logger->info("RGB colorizer running in SYNCHRONOUS mode");
+  if (!load_calibration()) {
+    logger->error("RGB colorizer: Failed to load calibration from config_sensors.json");
+    throw std::runtime_error("RGB colorizer calibration failed");
+  }
+  logger->info("RGB colorizer enabled with calibration from config_sensors.json");
+
+  set_callbacks();
+  logger->info("RGB colorizer running in SYNCHRONOUS mode");
+
+  // Initialize Colmap output if enabled
+  if (colmap_output_enabled) {
+    init_colmap_output();
   }
 
   logger->info("ready");
 }
 
 RGBColorizerROS::~RGBColorizerROS() {
+  // Note: Colmap finalization is now handled by at_exit() which provides the final dump_path
+  // If at_exit was not called (abnormal termination), data remains in temp folder
+}
+
+void RGBColorizerROS::at_exit(const std::string& dump_path) {
+  if (colmap_output_enabled && colmap_initialized) {
+    finalize_colmap_output();
+  }
 }
 
 std::vector<GenericTopicSubscription::Ptr> RGBColorizerROS::create_subscriptions(rclcpp::Node& node) {
-  if (!enabled) {
-    return {};
-  }
-
   rclcpp::QoS image_qos(10);
   image_qos.best_effort();
   image_sub = node.create_subscription<sensor_msgs::msg::CompressedImage>(
@@ -325,8 +349,16 @@ void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::Sh
       std::lock_guard<std::mutex> lock(image_buffer_mutex);
       image_buffer.emplace_back(stamp, final_image);
 
+      // Store compressed data for Colmap (original quality)
+      if (colmap_output_enabled) {
+        compressed_image_buffer.emplace_back(stamp, msg->data);
+      }
+
       while (image_buffer.size() > max_buffer_size) {
         image_buffer.pop_front();
+      }
+      while (compressed_image_buffer.size() > max_buffer_size) {
+        compressed_image_buffer.pop_front();
       }
     }
 
@@ -355,9 +387,12 @@ void RGBColorizerROS::image_callback(const sensor_msgs::msg::CompressedImage::Sh
 }
 
 void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
-  if (!enabled) {
+  // Skip duplicate frame callbacks (GLIM may call on_new_frame twice per frame)
+  static double last_frame_stamp = -1.0;
+  if (std::abs(frame->stamp - last_frame_stamp) < 1e-6) {
     return;
   }
+  last_frame_stamp = frame->stamp;
 
   // Check if deskewed frame is available
   if (!frame->frame || frame->frame->size() == 0) {
@@ -426,6 +461,14 @@ void RGBColorizerROS::on_new_frame(const EstimationFrame::ConstPtr& frame) {
     mutable_custom_data["rgb_fov_data"] = fov_data;
   }
 
+  // Save Colmap frame if enabled
+  // T_world_camera = T_world_lidar * T_lidar_camera
+  // T_lidar_camera = T_camera_lidar.inverse()
+  if (colmap_output_enabled && colmap_initialized) {
+    Eigen::Isometry3d T_world_camera = frame->T_world_sensor() * T_camera_lidar.inverse();
+    save_colmap_frame(matched_image_stamp, T_world_camera);
+  }
+
   // Log statistics every 1000 frames (debug level)
   if (total_frames_received % 1000 == 0) {
     logger->debug("RGB colorizer stats (SYNC): lidar_frames={}, colorized={}, no_image_match={}",
@@ -489,10 +532,6 @@ std::shared_ptr<FrameRGBFovData> RGBColorizerROS::process_colorization_sync(cons
 }
 
 void RGBColorizerROS::on_update_submaps(const std::vector<SubMap::Ptr>& submaps) {
-  if (!enabled) {
-    return;
-  }
-
   // OPTIMIZED: Don't process submap colorization synchronously here
   // Instead, just send a lightweight notification with submap metadata
   // The actual FOV data is already stored in each frame's custom_data["rgb_fov_data"]
@@ -925,6 +964,250 @@ std::vector<uint32_t> RGBColorizerROS::colorize_points_all(
   }
 
   return colors;
+}
+
+void RGBColorizerROS::init_colmap_output() {
+  // Generate timestamp-based directory name (same timestamp as map folder will use)
+  auto now = std::chrono::system_clock::now();
+  auto time_t = std::chrono::system_clock::to_time_t(now);
+  std::tm* tm = std::localtime(&time_t);
+
+  std::ostringstream ss;
+  ss << std::put_time(tm, "%Y%m%d_%H%M%S");
+  std::string timestamp = ss.str();
+
+  // Create Colmap directory directly in the map folder location
+  // This matches the map folder naming convention: Log/map_YYYYMMDD_HHMMSS/Colmap
+  std::string log_dir = std::string(GLIM_ROS_SOURCE_DIR) + "/Log";
+  colmap_output_dir = log_dir + "/map_" + timestamp + "/Colmap";
+
+  std::string images_dir = colmap_output_dir + "/images";
+  std::string sparse_dir = colmap_output_dir + "/sparse/0";
+
+  try {
+    std::filesystem::create_directories(images_dir);
+    std::filesystem::create_directories(sparse_dir);
+    logger->info("Created Colmap directory: {}", colmap_output_dir);
+  } catch (const std::exception& e) {
+    logger->error("Failed to create Colmap directories: {}", e.what());
+    colmap_output_enabled = false;
+    return;
+  }
+
+  // Get original image size from config (before resize)
+  const Config sensors_config(GlobalConfig::get_config_path("config_sensors"));
+  auto image_size = sensors_config.param<std::vector<int>>("sensors", "image_size", {1920, 1200});
+  int width = image_size.size() >= 2 ? image_size[0] : 1920;
+  int height = image_size.size() >= 2 ? image_size[1] : 1200;
+
+  // Get original camera intrinsics (not scaled)
+  double fx = camera_matrix.at<double>(0, 0);
+  double fy = camera_matrix.at<double>(1, 1);
+  double cx = camera_matrix.at<double>(0, 2);
+  double cy = camera_matrix.at<double>(1, 2);
+
+  // Initialize Colmap undistortion maps (precomputed for efficiency, like FAST-LIVO2)
+  // This uses initUndistortRectifyMap + remap instead of cv::undistort
+  cv::initUndistortRectifyMap(
+    camera_matrix, dist_coeffs,
+    cv::Mat::eye(3, 3, CV_64F),  // No rectification
+    camera_matrix,               // Use same camera matrix for output
+    cv::Size(width, height),
+    CV_16SC2,                    // Format for fast remap
+    colmap_undist_map1, colmap_undist_map2);
+  colmap_undist_maps_initialized = true;
+  logger->info("Initialized Colmap undistortion maps ({}x{})", width, height);
+
+  // Write cameras.txt (PINHOLE model - undistorted images)
+  std::string cameras_path = sparse_dir + "/cameras.txt";
+  std::ofstream cameras_file(cameras_path);
+  if (!cameras_file.is_open()) {
+    logger->error("Failed to open cameras.txt for writing");
+    colmap_output_enabled = false;
+    return;
+  }
+  cameras_file << "# Camera list with one line of data per camera:\n";
+  cameras_file << "#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n";
+  cameras_file << "1 PINHOLE " << width << " " << height << " "
+               << std::fixed << std::setprecision(6)
+               << fx << " " << fy << " " << cx << " " << cy << std::endl;
+  cameras_file.close();
+  logger->info("Wrote cameras.txt: PINHOLE {}x{} fx={:.2f} fy={:.2f} cx={:.2f} cy={:.2f}",
+               width, height, fx, fy, cx, cy);
+
+  // points3D.txt and images.txt will be generated at exit (finalize_colmap_output)
+  // using the optimized trajectory from traj_lidar.txt
+
+  colmap_image_counter = 0;
+  colmap_initialized = true;
+  logger->info("Colmap output initialized");
+}
+
+void RGBColorizerROS::save_colmap_frame(double image_stamp, const Eigen::Isometry3d& T_world_camera) {
+  if (!colmap_initialized) {
+    return;
+  }
+
+  // Skip if this image was already saved (same image matched to multiple LiDAR frames)
+  if (std::abs(image_stamp - colmap_last_saved_image_stamp) < 1e-6) {
+    return;
+  }
+
+  // Find compressed image data for this timestamp
+  std::vector<uint8_t> compressed_data;
+  {
+    std::lock_guard<std::mutex> lock(image_buffer_mutex);
+    for (const auto& entry : compressed_image_buffer) {
+      if (std::abs(entry.first - image_stamp) < 1e-6) {
+        compressed_data = entry.second;
+        break;
+      }
+    }
+  }
+
+  if (compressed_data.empty()) {
+    return;
+  }
+
+  colmap_last_saved_image_stamp = image_stamp;
+  colmap_image_counter++;
+
+  // Generate image filename (5 digits, zero-padded)
+  std::ostringstream ss;
+  ss << std::setw(5) << std::setfill('0') << colmap_image_counter;
+  std::string image_name = ss.str() + ".png";
+  std::string image_path = colmap_output_dir + "/images/" + image_name;
+
+  // Decode original resolution image from compressed data
+  cv::Mat full_res_image = cv::imdecode(cv::Mat(compressed_data), cv::IMREAD_COLOR);
+  if (full_res_image.empty()) {
+    logger->warn("Failed to decode compressed image for Colmap");
+    colmap_image_counter--;
+    return;
+  }
+
+  // Undistort the full-resolution image using precomputed maps (FAST-LIVO2 style)
+  cv::Mat undistorted_image;
+  if (colmap_undist_maps_initialized) {
+    cv::remap(full_res_image, undistorted_image, colmap_undist_map1, colmap_undist_map2, cv::INTER_LINEAR);
+  } else {
+    cv::undistort(full_res_image, undistorted_image, camera_matrix, dist_coeffs);
+  }
+
+  // Save undistorted image (same as FAST-LIVO2: default PNG compression level 3)
+  cv::imwrite(image_path, undistorted_image);
+
+  // Store timestamp for images.txt generation at exit
+  colmap_image_stamps.emplace_back(colmap_image_counter, image_stamp);
+}
+
+void RGBColorizerROS::finalize_colmap_output() {
+  if (colmap_image_stamps.empty()) {
+    logger->info("No Colmap frames saved");
+    // Clean up empty Colmap folder
+    try {
+      std::filesystem::remove_all(colmap_output_dir);
+    } catch (...) {}
+    return;
+  }
+
+  std::string sparse_dir = colmap_output_dir + "/sparse/0";
+
+  // Load optimized trajectory from traj_lidar.txt
+  // Find the map folder (parent of Colmap folder)
+  std::string map_dir = std::filesystem::path(colmap_output_dir).parent_path().string();
+  std::string traj_path = map_dir + "/traj_lidar.txt";
+
+  std::map<double, Eigen::Isometry3d> trajectory;
+  std::ifstream traj_file(traj_path);
+  if (traj_file.is_open()) {
+    std::string line;
+    while (std::getline(traj_file, line)) {
+      if (line.empty() || line[0] == '#') continue;
+      std::istringstream iss(line);
+      double stamp, x, y, z, qx, qy, qz, qw;
+      if (iss >> stamp >> x >> y >> z >> qx >> qy >> qz >> qw) {
+        Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+        pose.translation() = Eigen::Vector3d(x, y, z);
+        pose.linear() = Eigen::Quaterniond(qw, qx, qy, qz).normalized().toRotationMatrix();
+        trajectory[stamp] = pose;
+      }
+    }
+    traj_file.close();
+    logger->info("Loaded {} poses from optimized trajectory", trajectory.size());
+  } else {
+    logger->warn("Failed to load optimized trajectory from {}, images.txt will use identity poses", traj_path);
+  }
+
+  // Helper lambda to interpolate pose from trajectory
+  auto interpolate_pose = [&trajectory](double stamp) -> Eigen::Isometry3d {
+    if (trajectory.empty()) return Eigen::Isometry3d::Identity();
+
+    auto it_after = trajectory.lower_bound(stamp);
+    if (it_after == trajectory.begin()) return it_after->second;
+    if (it_after == trajectory.end()) return std::prev(it_after)->second;
+
+    auto it_before = std::prev(it_after);
+    double t0 = it_before->first, t1 = it_after->first;
+    double alpha = (stamp - t0) / (t1 - t0);
+
+    Eigen::Vector3d trans = (1.0 - alpha) * it_before->second.translation() + alpha * it_after->second.translation();
+    Eigen::Quaterniond q0(it_before->second.linear()), q1(it_after->second.linear());
+    Eigen::Quaterniond q = q0.slerp(alpha, q1);
+
+    Eigen::Isometry3d result = Eigen::Isometry3d::Identity();
+    result.translation() = trans;
+    result.linear() = q.toRotationMatrix();
+    return result;
+  };
+
+  // Generate images.txt with optimized trajectory poses
+  std::string images_path = sparse_dir + "/images.txt";
+  std::ofstream images_file(images_path);
+  if (images_file.is_open()) {
+    images_file << "# Image list with two lines of data per image:\n";
+    images_file << "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n";
+    images_file << "#   POINTS2D[] as (X, Y, POINT3D_ID)\n";
+
+    for (const auto& [image_id, timestamp] : colmap_image_stamps) {
+      // Get optimized LiDAR pose
+      Eigen::Isometry3d T_world_lidar = interpolate_pose(timestamp);
+      // T_world_camera = T_world_lidar * T_lidar_camera = T_world_lidar * T_camera_lidar.inverse()
+      Eigen::Isometry3d T_world_camera = T_world_lidar * T_camera_lidar.inverse();
+      // Colmap uses T_camera_world (world-to-camera)
+      Eigen::Isometry3d T_camera_world = T_world_camera.inverse();
+
+      Eigen::Quaterniond q(T_camera_world.rotation());
+      Eigen::Vector3d t = T_camera_world.translation();
+
+      // Generate filename (5 digits, zero-padded)
+      std::ostringstream ss;
+      ss << std::setw(5) << std::setfill('0') << image_id << ".png";
+
+      // Format: IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+      images_file << image_id << " "
+                  << std::fixed << std::setprecision(6)
+                  << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << " "
+                  << t.x() << " " << t.y() << " " << t.z() << " "
+                  << "1 " << ss.str() << "\n";
+      // Empty POINTS2D line
+      images_file << "\n";
+    }
+    images_file.close();
+    logger->info("Colmap images.txt saved: {} images with optimized trajectory", colmap_image_stamps.size());
+  }
+
+  // Create empty points3D.txt (can be populated later with RGB point cloud if needed)
+  std::string points3d_path = sparse_dir + "/points3D.txt";
+  std::ofstream points3d_file(points3d_path);
+  if (points3d_file.is_open()) {
+    points3d_file << "# 3D point list with one line of data per point:\n";
+    points3d_file << "#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n";
+    // Empty for now - 3DGS doesn't strictly require points3D.txt
+    points3d_file.close();
+  }
+
+  logger->info("Colmap output finalized: {} images saved to {}", colmap_image_stamps.size(), colmap_output_dir);
 }
 
 }  // namespace glim

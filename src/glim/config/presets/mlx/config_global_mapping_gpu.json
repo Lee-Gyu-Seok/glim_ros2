@@ -11,7 +11,10 @@
     "registration_error_factor_type": "VGICP_GPU",
     // Use fine voxel resolution for accuracy
     "randomsampling_rate": 1.0,
-    "submap_voxel_resolution": 0.1,
+    "submap_voxel_resolution": 0.08,       // 가까운 거리 (5m 이내) 해상도
+    "submap_voxel_resolution_max": 0.15,   // 먼 거리 (15m 이상) 해상도
+    "submap_voxel_resolution_dmin": 5.0,   // 정밀 해상도 적용 거리 (m)
+    "submap_voxel_resolution_dmax": 15.0,  // 거친 해상도 적용 거리 (m)
     "submap_voxelmap_levels": 4,
     "submap_voxelmap_scaling_factor": 2.0,
     // Accuracy-focused implicit loop detection (based on successful run 202003)

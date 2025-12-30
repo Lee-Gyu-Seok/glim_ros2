@@ -3,6 +3,7 @@
 #include <deque>
 #include <mutex>
 #include <memory>
+#include <fstream>
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/compressed_image.hpp>
@@ -77,6 +78,7 @@ public:
   ~RGBColorizerROS();
 
   virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override;
+  virtual void at_exit(const std::string& dump_path) override;
 
 private:
   void set_callbacks();
@@ -129,7 +131,6 @@ private:
   std::shared_ptr<spdlog::logger> logger;
 
   // Configuration
-  bool enabled;
   std::string image_topic;
   double sync_tolerance;
   size_t max_buffer_size;
@@ -164,11 +165,32 @@ private:
   std::mutex image_buffer_mutex;
   std::deque<std::pair<double, cv::Mat>> image_buffer;
 
+  // Compressed image buffer for Colmap (original quality, ~3MB for 30 images)
+  std::deque<std::pair<double, std::vector<uint8_t>>> compressed_image_buffer;
+
   // ROS subscription
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr image_sub;
 
   // Undistortion maps initialized flag
   bool undist_maps_initialized;
+
+  // Colmap output configuration
+  bool colmap_output_enabled;
+  std::string colmap_output_dir;         // Directory inside map folder (Log/map_YYYYMMDD_HHMMSS/Colmap)
+  std::vector<std::pair<int, double>> colmap_image_stamps;  // {image_id, timestamp} for images.txt generation at exit
+  int colmap_image_counter;
+  bool colmap_initialized;
+  double colmap_last_saved_image_stamp;  // Prevent duplicate image saving
+
+  // Colmap undistortion maps (precomputed for efficiency, like FAST-LIVO2)
+  cv::Mat colmap_undist_map1;
+  cv::Mat colmap_undist_map2;
+  bool colmap_undist_maps_initialized;
+
+  // Colmap output methods
+  void init_colmap_output();
+  void save_colmap_frame(double image_stamp, const Eigen::Isometry3d& T_world_camera);
+  void finalize_colmap_output();  // Close files at exit
 };
 
 }  // namespace glim

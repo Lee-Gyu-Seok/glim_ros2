@@ -1,9 +1,7 @@
 {
   /*** RGB Colorizer Configuration ***/
+  // To disable RGB colorizer, remove "librgb_colorizer_ros.so" from config_ros.json
   "rgb_colorizer": {
-    // Enable/disable RGB colorizer
-    "enabled": true,
-
     // ROS topic for compressed image
     "image_topic": "/spadi/rgb_image/image_raw/compressed",
 
@@ -24,6 +22,11 @@
     "image_resize_scale": 0.25,            // Scale factor: 1.0=original, 0.5=half size, 0.25=quarter size
 
     // Motion compensation (correct for LiDAR-camera time difference using IMU trajectory)
-    "enable_motion_compensation": false
+    "enable_motion_compensation": false,
+
+    // Colmap output (for 3D Gaussian Splatting)
+    // Saves undistorted images and camera poses in Colmap format
+    // Output: Log/Colmap_YYYYMMDD_HHMMSS/{images/, sparse/0/cameras.txt, images.txt, points3D.txt}
+    "colmap_output_enabled": true
   }
 }
