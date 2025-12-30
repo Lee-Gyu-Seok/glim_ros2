@@ -46,6 +46,7 @@ public:
 
   virtual std::vector<GenericTopicSubscription::Ptr> create_subscriptions(rclcpp::Node& node) override;
   virtual void at_exit(const std::string& dump_path) override;
+  virtual void shutdown() override;
 
 private:
   void set_callbacks();

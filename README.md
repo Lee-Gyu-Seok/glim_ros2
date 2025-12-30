@@ -262,7 +262,7 @@ config/presets/mlx/
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   LiDAR     │────▶│  Preprocessing   │────▶│   Odometry      │
-│   Points    │     │  (Downsampling)  │     │   (CT-GICP)     │
+│   Points    │     │   (Filtering)    │     │   (CT-GICP)     │
 └─────────────┘     └──────────────────┘     └────────┬────────┘
                                                       │
 ┌─────────────┐                                       │
@@ -378,31 +378,41 @@ LiDAR 포인트클라우드에 대한 전처리를 수행합니다.
 
 - 설정 파일: `config_preprocess.json`
 - 처리 순서:
-  1. **Intensity 필터링**: 저반사율 포인트 제거
-  2. **다운샘플링**: 복셀 그리드 기반 샘플링
+  1. **Intensity 필터링**: 저반사율 포인트 제거 (선택적)
+  2. **다운샘플링**: 복셀 그리드 기반 샘플링 (선택적, MLX는 비활성화)
   3. **거리 필터링**: 최소/최대 거리 범위 외 포인트 제거
   4. **Cropbox 필터링**: 특정 영역 내 포인트 제거 (선택적)
   5. **Outlier 제거**: 통계적 이상치 제거 (선택적)
 
 ```json
 {
-  "distance_near_thresh": 0.3,
+  "distance_near_thresh": 0.5,
   "distance_far_thresh": 100.0,
-  "downsample_resolution": 0.1,
-  "enable_intensity_filter": true,
-  "intensity_min_thresh": 10.0,
-  "enable_outlier_removal": false
+  "downsample_resolution": 0.0,
+  "enable_intensity_filter": false,
+  "intensity_min_thresh": 30.0,
+  "enable_outlier_removal": false,
+  "outlier_removal_k": 6,
+  "outlier_std_mul_factor": 1.5
 }
 ```
 
-| 파라미터 | 설명 | 권장값 |
+| 파라미터 | 설명 | MLX 설정 |
 |---------|------|--------|
-| `distance_near_thresh` | 최소 거리 (m) | 0.3~1.0 |
-| `distance_far_thresh` | 최대 거리 (m) | 50~100 |
-| `downsample_resolution` | 다운샘플링 복셀 크기 (m) | 0.05~0.15 |
-| `enable_intensity_filter` | Intensity 필터 활성화 | `true` / `false` |
-| `intensity_min_thresh` | 최소 intensity 임계값 | 센서 의존적 |
-| `enable_outlier_removal` | 통계적 이상치 제거 | `false` (성능 영향) |
+| `distance_near_thresh` | 최소 거리 (m) | 0.5 |
+| `distance_far_thresh` | 최대 거리 (m) | 100.0 |
+| `downsample_resolution` | 다운샘플링 복셀 크기 (m), 0=비활성화 | 0.0 |
+| `enable_intensity_filter` | Intensity 필터 활성화 | `false` |
+| `intensity_min_thresh` | 최소 intensity 임계값 | 30.0 |
+| `enable_outlier_removal` | 통계적 이상치 제거 | `false` |
+| `outlier_removal_k` | SOR 이웃 수 (작을수록 공격적) | 6 |
+| `outlier_std_mul_factor` | SOR 표준편차 배수 (작을수록 공격적) | 1.5 |
+
+> **MLX 참고**: MLX LiDAR는 56×192 = 10,752 points/scan으로 포인트 수가 적어 다운샘플링 없이 사용합니다.
+
+**Statistical Outlier Removal (SOR):**
+
+각 포인트의 k개 최근접 이웃까지 평균 거리를 계산하고, 전역 평균(μ)과 표준편차(σ)를 기준으로 μ + α·σ를 초과하는 포인트를 제거합니다. 고립된 노이즈 포인트 제거에 효과적입니다.
 
 **Intensity 필터링:**
 

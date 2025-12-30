@@ -28,6 +28,12 @@ public:
   virtual void at_exit(const std::string& dump_path) {}
 
   /**
+   * @brief Called before destruction to release ROS resources (publishers, subscribers, etc.)
+   *        while ROS context is still valid.
+   */
+  virtual void shutdown() {}
+
+  /**
    * @brief Load an extension module from a dynamic library
    * @param so_name  Dynamic library name
    * @return         Loaded extension module

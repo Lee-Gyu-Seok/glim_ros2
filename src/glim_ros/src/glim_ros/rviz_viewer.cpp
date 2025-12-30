@@ -88,7 +88,32 @@ RvizViewer::RvizViewer() : logger(create_module_logger("rviz")), fov_submaps_upd
 
 RvizViewer::~RvizViewer() {
   kill_switch = true;
-  thread.join();
+  if (thread.joinable()) {
+    thread.join();
+  }
+}
+
+void RvizViewer::shutdown() {
+  // Stop the spin thread first
+  kill_switch = true;
+  if (thread.joinable()) {
+    thread.join();
+  }
+
+  // Release ROS resources while context is still valid
+  points_pub.reset();
+  aligned_points_pub.reset();
+  map_pub.reset();
+  odom_pub.reset();
+  pose_pub.reset();
+  points_corrected_pub.reset();
+  aligned_points_corrected_pub.reset();
+  odom_corrected_pub.reset();
+  pose_corrected_pub.reset();
+  path_pub.reset();
+  tf_broadcaster.reset();
+  tf_listener.reset();
+  tf_buffer.reset();
 }
 
 void RvizViewer::at_exit(const std::string& dump_path) {

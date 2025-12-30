@@ -200,7 +200,9 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
 
   // Outlier removal
   if (params.enable_outlier_removal) {
+    int before_outlier_removal = frame->size();
     frame = gtsam_points::remove_outliers(frame, params.outlier_removal_k, params.outlier_std_mul_factor, params.num_threads);
+    spdlog::debug("Outlier removal: {} -> {} points (k={}, std_mul={})", before_outlier_removal, frame->size(), params.outlier_removal_k, params.outlier_std_mul_factor);
   }
 
   // Create a preprocessed frame

@@ -9,9 +9,11 @@
     "random_downsample_target": 0,
     "random_downsample_rate": 0.5,
     // Statistical Outlier Removal (SOR) - 고립된 노이즈 포인트 제거
+    // k: 이웃 수 (낮을수록 공격적), std_mul: 표준편차 배수 (낮을수록 공격적)
+    // MLX: 56x192 solid-state, 수직 화각 33.2도로 좁아 k를 낮게 설정
     "enable_outlier_removal": true,
-    "outlier_removal_k": 15,
-    "outlier_std_mul_factor": 1.2,
+    "outlier_removal_k": 6,
+    "outlier_std_mul_factor": 1.5,
     // Intensity filter - 낮은 반사 강도의 불확실한 포인트 제거
     "enable_intensity_filter": true,
     "intensity_min_thresh": 30.0,

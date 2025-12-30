@@ -225,13 +225,32 @@ GlimROS::GlimROS(const rclcpp::NodeOptions& options) : Node("glim_ros", options)
 
 GlimROS::~GlimROS() {
   spdlog::debug("quit");
-  extension_modules.clear();
+
+  // Stop timer and subscribers first to prevent callbacks during destruction
+  timer.reset();
+  imu_sub.reset();
+  points_sub.reset();
+#ifdef BUILD_WITH_CV_BRIDGE
+  image_sub.shutdown();
+#endif
+  extension_subs.clear();
+
+  // Shutdown extension modules while ROS context is still valid
+  for (auto& module : extension_modules) {
+    module->shutdown();
+  }
 
   if (dump_on_unload) {
     std::string dump_path = "/tmp/dump";
     wait(true);
     save(dump_path);
   }
+
+  // Clear extension modules and SLAM components
+  extension_modules.clear();
+  global_mapping.reset();
+  sub_mapping.reset();
+  odometry_estimation.reset();
 }
 
 const std::vector<std::shared_ptr<GenericTopicSubscription>>& GlimROS::extension_subscriptions() {
