@@ -310,24 +310,25 @@ LiDAR 포인트클라우드와 IMU 데이터를 융합하여 실시간 자세 �
   "so_name": "libodometry_estimation_gpu.so",
   "vgicp_resolution": 0.25,
   "vgicp_voxelmap_levels": 2,
-  "smoother_lag": 10.0,
-  "disable_imu_factor": false
+  "smoother_lag": 10.0
 }
 ```
 
-**`disable_imu_factor` 옵션:**
+**IMU 노이즈로 인한 Z축 지터 해결:**
 
-GPU 모드에서 IMU Factor Graph 사용 시 Z축 지터(수직 진동)가 발생하는 경우, `disable_imu_factor: true`로 설정하면 IMU를 deskewing에만 사용하고 Factor Graph에서는 제외합니다.
+GPU 모드에서 IMU Factor Graph 사용 시 Z축 지터(수직 진동)가 발생하는 경우, IMU 공분산을 증가시켜 해결할 수 있습니다.
 
-| 설정 | IMU 사용 방식 | 권장 상황 |
-|-----|-------------|----------|
-| `false` (기본) | Factor Graph에 ImuFactor 추가 | IMU 품질이 좋고 캘리브레이션이 정확한 경우 |
-| `true` | Deskewing + 초기값 예측에만 사용 | Z축 지터 발생 시, IMU 노이즈가 큰 경우 |
+`config_sensors.json`에서 IMU 노이즈 값을 조정:
+```json
+{
+  "sensors": {
+    "imu_acc_noise": 1.0,   // 기본값보다 높게 설정
+    "imu_gyro_noise": 0.1   // 기본값보다 높게 설정
+  }
+}
+```
 
-`disable_imu_factor: true` 설정 시 동작:
-- IMU 적분으로 포인트클라우드 deskewing 수행
-- Factor Graph에는 ImuFactor 대신 등속 제약조건(BetweenFactor) 사용
-- CT 모드와 유사한 IMU 활용 방식
+> **참고**: `disable_imu_factor` 옵션은 현재 GLIM의 Fixed-Lag Smoother 구현과 호환되지 않아 사용할 수 없습니다. IMU Factor를 완전히 비활성화하려면 CT 모드(`libodometry_estimation_ct.so`)를 사용하세요.
 
 ##### CT 모드 (Continuous-Time GICP)
 - 설정 파일: `config_odometry_ct.json`

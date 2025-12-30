@@ -12,8 +12,6 @@
     "isam2_relinearize_skip": 1,
     "isam2_relinearize_thresh": 0.1,
     "fix_imu_bias": true,
-    // disable_imu_factor: true이면 IMU는 포즈 예측/deskewing에만 사용, Factor Graph에서 제외
-    "disable_imu_factor": true,
     // VGICP 해상도
     "vgicp_resolution": 0.25,
     "vgicp_voxelmap_levels": 2,

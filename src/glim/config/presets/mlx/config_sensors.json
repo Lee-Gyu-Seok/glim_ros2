@@ -17,9 +17,9 @@
   // T_lidar_imu is the inverse: LiDAR -> IMU, so translation is negated
   "sensors": {
     // IMU config
-    "imu_acc_noise": 0.5,
-    // # past: "imu_gyro_noise": 0.3,
-    "imu_gyro_noise": 0.5,  // Angular velocity error 높음 (0.0975 rad/s) → 노이즈 파라미터 증가
+    // IMU 노이즈를 높게 설정하여 Factor Graph에서 IMU 영향력 감소 (Z축 지터 완화)
+    "imu_acc_noise": 1.0,
+    "imu_gyro_noise": 0.1,
     "imu_int_noise": 0.001,
     "imu_bias_noise": 0.001,
     // LiDAR config

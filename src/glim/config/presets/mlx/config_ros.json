@@ -29,7 +29,7 @@
       "librgb_colorizer_ros.so",  // RGB colorizer (must be before rviz_viewer)
       "librviz_viewer.so",
       "libscan_context_loop_detector.so"
-      // "libgravity_estimator.so",  // Disabled for testing
+      // "libgravity_estimator.so"  // Not compatible with CT odometry (requires B(id) variables)
       // "libimu_validator_headless.so"
     ],
     // Topics for MLX

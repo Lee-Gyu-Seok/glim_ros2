@@ -27,6 +27,6 @@
     // Colmap output (for 3D Gaussian Splatting)
     // Saves undistorted images and camera poses in Colmap format
     // Output: Log/Colmap_YYYYMMDD_HHMMSS/{images/, sparse/0/cameras.txt, images.txt, points3D.txt}
-    "colmap_output_enabled": true
+    "colmap_output_enabled": false
   }
 }

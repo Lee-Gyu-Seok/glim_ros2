@@ -127,16 +127,18 @@ PreprocessedFrame::Ptr CloudPreprocessor::preprocess_impl(const RawPoints::Const
     frame = gtsam_points::sample(frame, intensity_indices);
   }
 
-  // Downsampling
-  if (params.use_random_grid_downsampling) {
-    const double rate = params.downsample_target > 0 ? static_cast<double>(params.downsample_target) / frame->size() : params.downsample_rate;
-    frame = gtsam_points::randomgrid_sampling(frame, params.downsample_resolution, rate, mt, params.num_threads);
-  } else {
-    frame = gtsam_points::voxelgrid_sampling(frame, params.downsample_resolution, params.num_threads);
-  }
+  // Downsampling (skip if resolution is 0 or negative)
+  if (params.downsample_resolution > 0) {
+    if (params.use_random_grid_downsampling) {
+      const double rate = params.downsample_target > 0 ? static_cast<double>(params.downsample_target) / frame->size() : params.downsample_rate;
+      frame = gtsam_points::randomgrid_sampling(frame, params.downsample_resolution, rate, mt, params.num_threads);
+    } else {
+      frame = gtsam_points::voxelgrid_sampling(frame, params.downsample_resolution, params.num_threads);
+    }
 
-  if (frame->size() < 100) {
-    spdlog::warn("too few points in the downsampled cloud ({} points)", frame->size());
+    if (frame->size() < 100) {
+      spdlog::warn("too few points in the downsampled cloud ({} points)", frame->size());
+    }
   }
 
   // Distance filter
