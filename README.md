@@ -1,6 +1,6 @@
 # glim_ros2
 
-LiDAR-IMU SLAM을 위한 GLIM ROS2 래퍼 패키지. 모든 의존성이 git submodule로 포함되어 클론 후 바로 빌드 가능.
+LiDAR-IMU SLAM을 위한 GLIM ROS2 래퍼 패키지. 모든 의존성이 포함되어 클론 후 바로 빌드 가능.
 
 ## 사전 요구사항
 
@@ -21,28 +21,13 @@ sudo apt install ros-humble-gtsam
 ### 1. 저장소 클론
 
 ```bash
-# submodule과 함께 클론
-git clone --recursive https://github.com/SOSLAB-IVC/glim_ros2
+cd ~/colcon_ws/src
+git clone https://github.com/SOSLAB-IVC/glim_ros2
 ```
 
-### 2. 초기 설정 (setup.sh)
+### 2. 빌드
 
 ```bash
-cd glim_ros2
-./setup.sh
-```
-
-**setup.sh 동작:**
-- git submodule 초기화 및 다운로드 (`glim`, `gtsam_points`, `iridescence`)
-- `gtsam_points`를 호환 버전(v1.0.8)으로 체크아웃 (ros-humble-gtsam 4.2 호환)
-- `iridescence` 하위 submodule 초기화 (imgui, implot 등)
-
-> **참고**: `git clone --recursive` 미사용 시 또는 submodule이 비어있는 경우 반드시 실행 필요.
-
-### 3. 빌드
-
-```bash
-# colcon workspace로 이동 (glim_ros2가 src/ 안에 있는 경우)
 cd ~/colcon_ws
 
 # ROS2 환경 설정
@@ -116,26 +101,15 @@ ros2 run glim_ros glim_rosnode --ros-args -p config_path:=$(realpath src/glim_ro
 glim_ros2/
 ├── src/
 │   ├── glim_ros/            # ROS2 래퍼 패키지
-│   ├── glim/                # GLIM 코어 알고리즘 (submodule)
+│   ├── glim/                # GLIM 코어 알고리즘
 │   │   └── config/          # 설정 파일들
 │   │       └── presets/     # 센서별 프리셋 (mlx 등)
-│   ├── gtsam_points/        # 포인트 클라우드 등록 팩터 (submodule)
-│   └── iridescence/         # 3D 시각화 라이브러리 (submodule)
-├── setup.sh                 # 초기 설정 스크립트
+│   ├── gtsam_points/        # 포인트 클라우드 등록 팩터
+│   └── iridescence/         # 3D 시각화 라이브러리
 └── README.md
 ```
 
 ## 문제 해결
-
-### submodule이 비어있는 경우
-
-```bash
-# glim_ros2 디렉토리에서
-./setup.sh
-
-# 또는 수동으로
-git submodule update --init --recursive
-```
 
 ### Global Mapping에서 IndeterminantLinearSystemException 에러
 
