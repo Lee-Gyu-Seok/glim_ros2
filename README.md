@@ -1,6 +1,6 @@
 # glim_ros2
 
-LiDAR-IMU SLAM을 위한 GLIM의 ROS2 래퍼 패키지입니다. 모든 의존성이 git submodule로 포함되어 있어 클론 후 바로 빌드할 수 있습니다.
+LiDAR-IMU SLAM을 위한 GLIM ROS2 래퍼 패키지. 모든 의존성이 git submodule로 포함되어 클론 후 바로 빌드 가능.
 
 ## 사전 요구사항
 
@@ -32,12 +32,12 @@ cd glim_ros2
 ./setup.sh
 ```
 
-**setup.sh가 하는 일:**
+**setup.sh 동작:**
 - git submodule 초기화 및 다운로드 (`glim`, `gtsam_points`, `iridescence`)
-- `gtsam_points`를 호환 버전(v1.0.8)으로 체크아웃 (ros-humble-gtsam 4.2와 호환)
-- `iridescence`의 하위 submodule 초기화 (imgui, implot 등)
+- `gtsam_points`를 호환 버전(v1.0.8)으로 체크아웃 (ros-humble-gtsam 4.2 호환)
+- `iridescence` 하위 submodule 초기화 (imgui, implot 등)
 
-> **참고**: `git clone --recursive`를 사용하지 않았거나, submodule이 비어있는 경우 반드시 실행해야 합니다.
+> **참고**: `git clone --recursive` 미사용 시 또는 submodule이 비어있는 경우 반드시 실행 필요.
 
 ### 3. 빌드
 
@@ -57,12 +57,10 @@ source install/setup.bash
 
 ### 빌드 옵션
 
-```bash
-# CUDA 지원 (GPU 가속)
-colcon build --cmake-args -DBUILD_WITH_CUDA=ON
+CUDA가 설치되어 있으면 자동으로 GPU 지원 빌드. GPU 미사용 시:
 
-# 뷰어 없이 빌드 (헤드리스 모드)
-colcon build --cmake-args -DBUILD_WITH_VIEWER=OFF
+```bash
+colcon build --cmake-args -DBUILD_WITH_CUDA=OFF
 ```
 
 ## 실행 방법
@@ -88,7 +86,7 @@ ros2 run glim_ros glim_rosbag {rosbag2 파일 경로}
 
 ### offline_viewer (맵 시각화)
 
-저장된 맵을 불러와 시각화하고 편집할 수 있습니다.
+저장된 맵 불러오기 및 시각화/편집.
 
 ```bash
 # 기본 사용법
@@ -106,7 +104,7 @@ ros2 run glim_ros offline_viewer --help
 
 ### 설정 파일 사용
 
-커스텀 설정 파일을 사용하려면:
+커스텀 설정 파일 사용:
 
 ```bash
 ros2 run glim_ros glim_rosnode --ros-args -p config_path:=$(realpath src/glim_ros2/src/glim/config/presets/mlx)
@@ -129,15 +127,6 @@ glim_ros2/
 
 ## 문제 해결
 
-### fmt/spdlog 버전 불일치
-
-시스템의 spdlog가 fmt v8을 사용합니다. 링크 에러 발생 시 클린 빌드:
-
-```bash
-rm -rf build install log
-colcon build
-```
-
 ### submodule이 비어있는 경우
 
 ```bash
@@ -148,30 +137,9 @@ colcon build
 git submodule update --init --recursive
 ```
 
-### CMake 4.0 호환성 문제 (VTK MPI 에러)
-
-pip로 CMake 4.0이 설치된 경우 아래와 같은 에러가 발생할 수 있습니다:
-
-```
-CMake Error at /usr/lib/x86_64-linux-gnu/cmake/vtk-9.1/VTK-targets.cmake:518 (set_target_properties):
-  The link interface of target "VTK::mpi" contains:
-    MPI::MPI_C
-  but the target was not found.
-```
-
-해결 방법:
-
-```bash
-# pip로 설치된 cmake 제거
-pip3 uninstall cmake
-
-# 시스템 cmake 확인 (3.22 이상이면 OK)
-cmake --version
-```
-
 ### Global Mapping에서 IndeterminantLinearSystemException 에러
 
-맵핑 중 아래와 같은 에러가 발생하는 경우:
+맵핑 중 발생하는 에러:
 
 ```
 [global] [error] an indeterminant linear system exception was caught during global map optimization!!
@@ -184,15 +152,15 @@ Indeterminant linear system detected while working near variable (Symbol: v2)
 "enable_imu": false
 ```
 
-이 설정은 Global Mapping에서 IMU를 비활성화합니다. Odometry에서는 여전히 IMU를 사용하므로 맵 품질에 큰 영향은 없습니다.
+Global Mapping에서만 IMU 비활성화. Odometry는 여전히 IMU 사용하므로 맵 품질 영향 미미.
 
 ## 출력 파일 설명
 
-`glim_rosbag` 또는 `glim_rosnode` 실행 후 `glim_ros/Log/map_날짜시간/` 폴더에 다음 파일들이 저장됩니다:
+`glim_rosbag` 또는 `glim_rosnode` 실행 후 `glim_ros/Log/map_날짜시간/` 폴더에 저장되는 파일:
 
 ### Trajectory 파일 (TUM 형식)
 
-모든 trajectory 파일은 TUM RGB-D 형식을 따릅니다:
+모든 trajectory 파일은 TUM RGB-D 형식:
 ```
 timestamp x y z qx qy qz qw
 ```
@@ -234,11 +202,11 @@ timestamp x y z qx qy qz qw
 
 ## System Workflow with MLX Preset
 
-본 시스템은 MLX LiDAR와 카메라를 사용한 LiDAR-IMU SLAM 및 RGB Colorization을 위해 최적화되어 있습니다.
+MLX LiDAR와 카메라를 사용한 LiDAR-IMU SLAM 및 RGB Colorization에 최적화된 시스템.
 
 ### 설정 파일 구조
 
-모든 설정 파일은 `src/glim/config/presets/mlx/` 폴더에 위치합니다:
+모든 설정 파일 위치: `src/glim/config/presets/mlx/`
 
 ```
 config/presets/mlx/
@@ -276,59 +244,43 @@ config/presets/mlx/
                                             └────────┬────────┘
 ┌─────────────┐     ┌──────────────────┐             │
 │   Camera    │────▶│  RGB Colorizer   │◀────────────┤
-│   Image     │     │  (FOV Filtering) │             │
-└─────────────┘     └──────────────────┘             ▼
-                                            ┌─────────────────┐
-                    ┌──────────────────┐    │  Global Mapping │
-                    │    ScanContext   │───▶│  (VGICP-GPU)    │
-                    │  Loop Detector   │    └────────┬────────┘
-                    └──────────────────┘             │
+│   Image     │     │ (Projection/     │             │
+└─────────────┘     │  Motion Comp.)   │             │
+                    └────────┬─────────┘             ▼
+                             │              ┌─────────────────┐
+                    ┌────────┴────────┐     │  Global Mapping │
+                    ▼                 ▼     │  (VGICP-GPU)    │
+             ┌────────────┐   ┌────────────┐└────────┬────────┘
+             │ Colmap     │   │ RGB Map    │         │
+             │ Output     │   │ Publish    │◀────────┤
+             │ (Optional) │   │            │         │
+             └────────────┘   └────────────┘         │
+                    ┌──────────────────┐             │
+                    │    ScanContext   │─────────────┘
+                    │  Loop Detector   │
+                    └──────────────────┘
                                                      ▼
                     ┌─────────────────────────────────────────┐
                     │           Output Files                  │
                     │  - traj_lidar.txt (Optimized trajectory)│
                     │  - Submap point clouds (RGB)            │
                     │  - downsampled_map.pcd                  │
-                    │  - profiling_stats.txt                  │
+                    │  - Colmap/ (Optional, for 3DGS)         │
                     └─────────────────────────────────────────┘
 ```
 
 ### 핵심 모듈 설명
 
 #### 1. Odometry Estimation (오도메트리)
-LiDAR 포인트클라우드와 IMU 데이터를 융합하여 실시간 자세 추정을 수행합니다.
+LiDAR 포인트클라우드와 IMU 데이터를 융합한 실시간 자세 추정.
 
 ##### GPU 모드 (VGICP-GPU)
 - 설정 파일: `config_odometry_gpu.json`
-- 현재 설정:
-  - **Registration**: VGICP-GPU (Voxelized GICP, CUDA 가속)
-  - **IMU 융합**: 가속도계/자이로스코프 데이터로 포인트클라우드 deskewing 및 초기 자세 추정
-  - **최적화**: iSAM2 기반 슬라이딩 윈도우 최적화
+- **Registration**: VGICP-GPU (Voxelized GICP, CUDA 가속)
+- **IMU 융합**: 포인트클라우드 deskewing 및 초기 자세 추정
+- **최적화**: iSAM2 기반 슬라이딩 윈도우 최적화
 
-```json
-{
-  "so_name": "libodometry_estimation_gpu.so",
-  "vgicp_resolution": 0.25,
-  "vgicp_voxelmap_levels": 2,
-  "smoother_lag": 10.0
-}
-```
-
-**IMU 노이즈로 인한 Z축 지터 해결:**
-
-GPU 모드에서 IMU Factor Graph 사용 시 Z축 지터(수직 진동)가 발생하는 경우, IMU 공분산을 증가시켜 해결할 수 있습니다.
-
-`config_sensors.json`에서 IMU 노이즈 값을 조정:
-```json
-{
-  "sensors": {
-    "imu_acc_noise": 1.0,   // 기본값보다 높게 설정
-    "imu_gyro_noise": 0.1   // 기본값보다 높게 설정
-  }
-}
-```
-
-> **참고**: `disable_imu_factor` 옵션은 현재 GLIM의 Fixed-Lag Smoother 구현과 호환되지 않아 사용할 수 없습니다. IMU Factor를 완전히 비활성화하려면 CT 모드(`libodometry_estimation_ct.so`)를 사용하세요.
+**Z축 지터 발생 시:** `config_sensors.json`에서 `imu_acc_noise`, `imu_gyro_noise` 값 증가로 해결.
 
 ##### CT 모드 (Continuous-Time GICP)
 - 설정 파일: `config_odometry_ct.json`
@@ -336,32 +288,6 @@ GPU 모드에서 IMU Factor Graph 사용 시 Z축 지터(수직 진동)가 발�
   - **Continuous-Time ICP**: 스캔 내 연속적인 모션을 모델링하여 스캔 시작/끝 포즈를 동시 최적화
   - **iVox 기반 Scan-to-Model**: O(1) 최근접 이웃 탐색으로 빠른 매칭
   - **IMU Deskewing**: IMU 적분으로 각 포인트의 정확한 위치 보정
-  - **LM 최적화**: Levenberg-Marquardt 최적화로 robust한 수렴
-
-```json
-{
-  "so_name": "libodometry_estimation_ct.so",
-  "use_imu": true,
-  "ivox_resolution": 0.5,
-  "ivox_min_points_dist": 0.03,
-  "ivox_lru_thresh": 40,
-  "max_correspondence_distance": 0.5,
-  "lm_max_iterations": 12,
-  "location_consistency_inf_scale": 1e-2,
-  "constant_velocity_inf_scale": 1e-2
-}
-```
-
-| 파라미터 | 설명 | 권장값 |
-|---------|------|--------|
-| `use_imu` | IMU deskewing 활성화 | `true` |
-| `ivox_resolution` | iVox 복셀 크기 (m) | 0.3~0.5 |
-| `ivox_min_points_dist` | 복셀 내 최소 점 간격 (m) | 0.03 |
-| `ivox_lru_thresh` | LRU 캐시 임계값 (스캔 수) | 40 |
-| `max_correspondence_distance` | 최대 대응점 거리 (m) | 0.5~1.0 |
-| `lm_max_iterations` | LM 최대 반복 횟수 | 10~15 |
-| `location_consistency_inf_scale` | 위치 일관성 가중치 | 1e-2 |
-| `constant_velocity_inf_scale` | 등속 모션 가중치 | 1e-2 |
 
 **GPU 모드 vs CT 모드 선택 가이드:**
 
@@ -374,91 +300,35 @@ GPU 모드에서 IMU Factor Graph 사용 시 Z축 지터(수직 진동)가 발�
 | IMU 의존도 | Factor Graph에서 사용 | Deskewing + 초기값 예측에 사용 |
 
 #### 2. Preprocessing (전처리)
-LiDAR 포인트클라우드에 대한 전처리를 수행합니다.
+LiDAR 포인트클라우드 전처리.
 
 - 설정 파일: `config_preprocess.json`
 - 처리 순서:
   1. **Intensity 필터링**: 저반사율 포인트 제거 (선택적)
-  2. **다운샘플링**: 복셀 그리드 기반 샘플링 (선택적, MLX는 비활성화)
+  2. **다운샘플링**: 복셀 그리드 기반 샘플링 (선택적)
   3. **거리 필터링**: 최소/최대 거리 범위 외 포인트 제거
   4. **Cropbox 필터링**: 특정 영역 내 포인트 제거 (선택적)
-  5. **Outlier 제거**: 통계적 이상치 제거 (선택적)
+  5. **Outlier 제거 (SOR)**: 통계적 이상치 제거 (선택적)
 
-```json
-{
-  "distance_near_thresh": 0.5,
-  "distance_far_thresh": 100.0,
-  "downsample_resolution": 0.0,
-  "enable_intensity_filter": false,
-  "intensity_min_thresh": 30.0,
-  "enable_outlier_removal": false,
-  "outlier_removal_k": 6,
-  "outlier_std_mul_factor": 1.5
-}
-```
-
-| 파라미터 | 설명 | MLX 설정 |
-|---------|------|--------|
-| `distance_near_thresh` | 최소 거리 (m) | 0.5 |
-| `distance_far_thresh` | 최대 거리 (m) | 100.0 |
-| `downsample_resolution` | 다운샘플링 복셀 크기 (m), 0=비활성화 | 0.0 |
-| `enable_intensity_filter` | Intensity 필터 활성화 | `false` |
-| `intensity_min_thresh` | 최소 intensity 임계값 | 30.0 |
-| `enable_outlier_removal` | 통계적 이상치 제거 | `false` |
-| `outlier_removal_k` | SOR 이웃 수 (작을수록 공격적) | 6 |
-| `outlier_std_mul_factor` | SOR 표준편차 배수 (작을수록 공격적) | 1.5 |
-
-> **MLX 참고**: MLX LiDAR는 56×192 = 10,752 points/scan으로 포인트 수가 적어 다운샘플링 없이 사용합니다.
-
-**Statistical Outlier Removal (SOR):**
-
-각 포인트의 k개 최근접 이웃까지 평균 거리를 계산하고, 전역 평균(μ)과 표준편차(σ)를 기준으로 μ + α·σ를 초과하는 포인트를 제거합니다. 고립된 노이즈 포인트 제거에 효과적입니다.
-
-**Intensity 필터링:**
-
-저반사율(low intensity) 포인트는 일반적으로 노이즈이거나 신뢰도가 낮은 측정값입니다. `intensity_min_thresh` 값 미만의 포인트를 제거하여 맵 품질을 개선할 수 있습니다. 적절한 임계값은 LiDAR 센서 특성에 따라 다르므로 실험을 통해 결정해야 합니다.
+**Statistical Outlier Removal (SOR):** 각 포인트의 k개 최근접 이웃까지 평균 거리 계산 후, 전역 평균(μ)과 표준편차(σ) 기준으로 μ + α·σ 초과 포인트 제거. 고립된 노이즈 포인트 제거에 효과적.
 
 #### 3. Sub Mapping (서브맵 생성)
-연속된 키프레임들을 묶어 서브맵을 생성합니다.
+연속된 키프레임을 묶어 서브맵 생성.
 
 - 설정 파일: `config_sub_mapping_gpu.json`
-- 현재 설정:
-  - **키프레임 전략**: 이동 거리 기반 (0.5m 이동 또는 1.57rad 회전)
-  - **서브맵 크기**: 최대 15개 키프레임
-  - **Registration**: VGICP-GPU
-  - **다운샘플링**: 0.08m 복셀 해상도
-
-```json
-{
-  "max_num_keyframes": 15,
-  "keyframe_update_interval_trans": 0.5,
-  "registration_error_factor_type": "VGICP_GPU",
-  "submap_downsample_resolution": 0.08
-}
-```
+- 키프레임 전략: 이동 거리 기반 (거리/회전 임계값)
+- Registration: VGICP-GPU
 
 #### 4. Global Mapping (전역 최적화)
-서브맵 간 관계를 최적화하고 루프 클로저를 적용합니다.
+서브맵 간 관계 최적화 및 루프 클로저 적용.
 
 - 설정 파일: `config_global_mapping_gpu.json`
-- 현재 설정:
-  - **IMU 사용**: 비활성화 (IndeterminantLinearSystemException 방지)
-  - **Between Factor**: 비활성화
-  - **Registration**: VGICP-GPU
-  - **Implicit Loop**: 100m 이내 서브맵 간 자동 루프 검출
-
-```json
-{
-  "enable_imu": false,
-  "create_between_factors": false,
-  "registration_error_factor_type": "VGICP_GPU",
-  "max_implicit_loop_distance": 100.0
-}
-```
+- Registration: VGICP-GPU
+- Implicit Loop: 일정 거리 이내 서브맵 간 자동 루프 검출
 
 ### 확장 모듈 (Extension Modules)
 
-`config_ros.json`에서 확장 모듈을 활성화/비활성화할 수 있습니다:
+`config_ros.json`에서 확장 모듈 활성화/비활성화:
 
 #### 1. ScanContext Loop Detector
 ```json
@@ -482,16 +352,53 @@ LiDAR 포인트클라우드에 대한 전처리를 수행합니다.
 
 #### 2. RGB Colorizer
 ```json
-"rgb_colorizer_enabled": true,
-"rgb_image_topic": "/spadi/rgb_image/image_raw/compressed"
+"extension_modules": ["librgb_colorizer_ros.so"]
 ```
 - 역할: 카메라 이미지를 이용한 포인트 클라우드 컬러화
-- 설정: `config_sensors.json`의 카메라 파라미터
+- 설정: `config_rgb_colorizer.json`, `config_sensors.json` (카메라 파라미터)
 - 기능:
-  - 카메라 FOV 내 포인트만 RGB 색상 적용
-  - Motion compensation (LiDAR-Camera 시간차 보정)
-  - Z-buffer 기반 가려짐 처리
-  - 종료 시 서브맵별 RGB 포인트 저장
+  - LiDAR-Camera 캘리브레이션 기반 포인트-이미지 투영
+  - Motion compensation: LiDAR-Camera 시간차를 IMU 궤적으로 보정
+  - Z-buffer 기반 가려짐 처리 (선택적)
+  - 서브맵별 RGB 포인트클라우드 저장
+  - Colmap 형식 출력 (선택적, 3DGS용)
+
+```json
+// config_rgb_colorizer.json
+{
+  "image_topic": "/spadi/rgb_image/image_raw/compressed",
+  "sync_tolerance": 0.05,
+  "enable_z_buffer": false,
+  "enable_motion_compensation": true,
+  "colmap_output_enabled": false
+}
+```
+
+| 파라미터 | 설명 | 기본값 |
+|---------|------|--------|
+| `sync_tolerance` | 이미지-포인트클라우드 시간 동기화 허용치 (초) | 0.05 |
+| `enable_z_buffer` | Z-buffer 기반 가려짐 처리 | `false` |
+| `enable_motion_compensation` | IMU 궤적 기반 모션 보정 | `true` |
+| `image_resize_scale` | 이미지 리사이즈 비율 (처리 속도 vs 품질) | 0.25 |
+| `colmap_output_enabled` | Colmap 형식 출력 활성화 | `false` |
+
+##### Colmap 출력 (3D Gaussian Splatting용)
+
+`colmap_output_enabled: true` 설정 시 왜곡 보정된 이미지와 카메라 포즈를 Colmap 형식으로 저장:
+
+```
+Log/map_YYYYMMDD_HHMMSS/Colmap/
+├── images/           # 왜곡 보정된 이미지 (JPEG)
+│   ├── 000001.jpg
+│   ├── 000002.jpg
+│   └── ...
+└── sparse/0/
+    ├── cameras.txt   # 카메라 내부 파라미터 (PINHOLE)
+    ├── images.txt    # 이미지별 카메라 포즈 (쿼터니언 + 위치)
+    └── points3D.txt  # 빈 파일 (3DGS에서 불필요)
+```
+
+3D Gaussian Splatting 학습에 직접 사용 가능한 형식. `images.txt`의 포즈는 World→Camera 변환 (Colmap 규약).
 
 #### 3. Gravity Estimator
 ```json
@@ -530,11 +437,11 @@ LiDAR 포인트클라우드에 대한 전처리를 수행합니다.
 | `VGICP` | Voxelized GICP | CPU/GPU |
 | `SmallGICP` | 경량 GICP (small_gicp 라이브러리) | CPU |
 
-GPU 버전 (`config_odometry_gpu.json`)은 VGICP-GPU만 지원합니다.
+GPU 버전 (`config_odometry_gpu.json`)은 VGICP-GPU만 지원.
 
 ### CPU vs GPU 설정 전환
 
-`config_ros.json`에서 CPU/GPU 모드를 선택합니다:
+`config_ros.json`에서 CPU/GPU 모드 선택:
 
 ```json
 // GPU 모드
@@ -548,7 +455,7 @@ GPU 버전 (`config_odometry_gpu.json`)은 VGICP-GPU만 지원합니다.
 
 ### 카메라 캘리브레이션 설정
 
-`config_sensors.json`에서 카메라 파라미터를 설정합니다:
+`config_sensors.json`에서 카메라 파라미터 설정:
 
 ```json
 {
@@ -565,7 +472,7 @@ GPU 버전 (`config_odometry_gpu.json`)은 VGICP-GPU만 지원합니다.
 
 ### IMU 시간 오프셋 캘리브레이션
 
-IMU와 LiDAR 센서는 각각 독립적인 클럭을 사용하며, 드라이버 처리 지연 등으로 인해 타임스탬프 간 오프셋이 발생할 수 있습니다. 이 오프셋은 **실행하여 측정**해야 합니다.
+IMU와 LiDAR 센서는 각각 독립적인 클럭을 사용하며, 드라이버 처리 지연 등으로 타임스탬프 간 오프셋 발생 가능. **실행하여 측정** 필요.
 
 #### 측정 방법
 
@@ -595,7 +502,7 @@ IMU와 LiDAR 센서는 각각 독립적인 클럭을 사용하며, 드라이버 
 
 #### IMU 노이즈 파라미터
 
-`config_sensors.json`에서 IMU 노이즈 특성을 설정합니다:
+`config_sensors.json`에서 IMU 노이즈 특성 설정:
 
 ```json
 {
@@ -606,7 +513,7 @@ IMU와 LiDAR 센서는 각각 독립적인 클럭을 사용하며, 드라이버 
 }
 ```
 
-IMU Validator의 `Angular velocity error`가 높으면 (> 0.05 rad/s) `imu_gyro_noise` 값을 높여야 합니다.
+IMU Validator의 `Angular velocity error`가 높으면 (> 0.05 rad/s) `imu_gyro_noise` 값 증가 필요.
 
 ### 프로파일링 통계
 
@@ -620,40 +527,9 @@ IMU Validator의 `Angular velocity error`가 높으면 (> 0.05 rad/s) `imu_gyro_
 | `odometry_cpu/create_factors` | CPU Factor 생성 시간 |
 | `odometry_gpu/create_factors` | GPU Factor 생성 시간 |
 
-### 원점 회귀 오차 계산 (Loop Closure 평가)
-
-`traj_lidar.txt`를 사용하여 시작-종료 위치/방향 오차를 계산할 수 있습니다:
-
-```python
-import numpy as np
-
-# traj_lidar.txt 로드 (TUM format: timestamp x y z qx qy qz qw)
-traj = np.loadtxt("traj_lidar.txt")
-
-# 시작/종료 위치
-start_pos = traj[0, 1:4]
-end_pos = traj[-1, 1:4]
-position_error = np.linalg.norm(end_pos - start_pos)
-
-# 시작/종료 쿼터니언
-start_quat = traj[0, 4:8]  # qx, qy, qz, qw
-end_quat = traj[-1, 4:8]
-
-# 방향 오차 계산 (quaternion difference)
-from scipy.spatial.transform import Rotation
-r_start = Rotation.from_quat(start_quat)
-r_end = Rotation.from_quat(end_quat)
-r_diff = r_start.inv() * r_end
-angle_error_rad = r_diff.magnitude()
-angle_error_deg = np.degrees(angle_error_rad)
-
-print(f"Position error: {position_error*100:.2f} cm")
-print(f"Orientation error: {angle_error_deg:.2f} degrees")
-```
-
 ### 결과 파일 요약
 
-프로그램 종료 시 `glim_ros/Log/map_YYYYMMDD_HHMMSS/` 폴더에 저장:
+프로그램 종료 시 `glim_ros/Log/map_YYYYMMDD_HHMMSS/` 폴더에 저장되는 결과:
 
 #### 궤적 파일 (TUM format)
 
@@ -683,7 +559,7 @@ print(f"Orientation error: {angle_error_deg:.2f} degrees")
 
 #### 서브맵 폴더 (`000000/`, `000001/`, ...)
 
-각 서브맵 폴더에는 다음 파일이 저장됩니다:
+각 서브맵 폴더에 저장되는 파일:
 
 | 파일 | 설명 |
 |------|------|
@@ -691,6 +567,17 @@ print(f"Orientation error: {angle_error_deg:.2f} degrees")
 | `points_compact.bin` | 서브맵 포인트클라우드 (바이너리) |
 | `covs_compact.bin` | 포인트별 공분산 매트릭스 |
 | `imu_rate.txt` | IMU 레이트 궤적 (고주파) |
+
+#### Colmap 출력 (선택적)
+
+`colmap_output_enabled: true` 설정 시:
+
+| 폴더/파일 | 설명 |
+|----------|------|
+| `Colmap/images/` | 왜곡 보정된 이미지 (JPEG) |
+| `Colmap/sparse/0/cameras.txt` | 카메라 내부 파라미터 |
+| `Colmap/sparse/0/images.txt` | 이미지별 카메라 포즈 |
+| `Colmap/sparse/0/points3D.txt` | 빈 파일 |
 
 #### 설정 백업
 
